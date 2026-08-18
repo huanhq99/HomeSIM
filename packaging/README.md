@@ -3,6 +3,21 @@
 MacCellular 把连接在 Mac 上的兼容 USB 蜂窝模块变成自托管的电话与短信终端。
 macOS 1.0 首发支持 Apple Silicon 和已验证的 QDC507/Baiwang 组合。
 
+> **这不是插上模块即可使用的托管电话服务。** 安装包提供程序和配置向导，但不附带
+> USB 蜂窝模块、实体 SIM、域名、Cloudflare 账户、Tunnel、TURN 服务器或模块侧语音
+> 运行文件。用户必须自行准备这些资源，并确认 SIM、固件和运营商支持所需功能。
+
+## 使用前准备
+
+- 本机短信：Apple Silicon Mac、兼容模块、本人合法控制且已正常注册网络的实体 SIM；
+- 手机远程短信：另需自有域名、Cloudflare Access application、Named Tunnel 和访问策略；
+- 手机远程电话：另需已验证的模块语音环境、模块运行文件、独立 coturn、TURN 域名、
+  证书和公网可达端口；
+- 后台来电提醒：iPhone 需要把 PWA 添加到主屏幕，并允许通知。
+
+安装向导不会替用户购买、创建或托管上述服务。只需短信时可以不部署 TURN；需要公网
+电话时，不能跳过 TURN 和模块语音环境。
+
 ## 安装
 
 ### DMG
