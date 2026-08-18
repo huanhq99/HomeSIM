@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MacCellular Native Preview</string>
+    <string name="title">Native Trust / SMS Preview</string>
+    <string name="scope_notice">支持设备登记、会话、短信同步和用户二次确认后的单次前台发送。没有自动重试、通知、电话、麦克风或后台服务。</string>
+    <string name="gateway_label">固定网关：%1$s</string>
+    <string name="device_not_ready">本机尚未生成登记密钥。</string>
+    <string name="device_ready">本机密钥标识（是否已登记以服务端为准）：%1$s</string>
+    <string name="ticket_id_hint">从 Mac 复制 ticket_id</string>
+    <string name="ticket_secret_hint">从 Mac 复制一次性 ticket_secret</string>
+    <string name="enroll">登记此设备</string>
+    <string name="load_session">读取会话</string>
+    <string name="sync_sms">同步短信</string>
+    <string name="sms_send_title">前台短信发送</string>
+    <string name="sms_phone_hint">收件号码（发送前会再次确认）</string>
+    <string name="sms_message_hint">短信正文（发送前会再次确认）</string>
+    <string name="send_sms">确认并发送一次</string>
+    <string name="check_sms_operation">手动核验未决发送</string>
+    <string name="close_sms_operation">关闭可安全处理的记录</string>
+    <string name="cursor_hint">可选 cursor</string>
+    <string name="limit_hint">条数 1–10</string>
+    <string name="default_limit">10</string>
+    <string name="idle">就绪。短信内容只在当前前台内存；no-backup 发送保护记录不保存号码、正文或正文哈希。</string>
+    <string name="working">正在执行…</string>
+    <string name="missing_ticket">必须粘贴 ticket_id 和 ticket_secret。</string>
+    <string name="missing_identity">请先完成设备登记。</string>
+    <string name="invalid_limit">短信条数必须为 1–10 的整数。</string>
+    <string name="enrollment_success">设备登记成功：%1$s</string>
+    <string name="enrollment_failed">登记结果未确认。不要复用该 ticket；先点“读取会话”核验，只有服务端确认未登记时才在 Mac 明确生成新 ticket。\n%1$s</string>
+    <string name="request_failed">请求失败：%1$s</string>
+    <string name="sms_missing_fields">收件号码和短信正文不能为空，且首尾不能有空白。</string>
+    <string name="sms_session_required">请先读取会话；只有 actions 明确包含 sms.send 且 sms_send=true 时才允许发送。</string>
+    <string name="sms_send_confirm_title">确认单次短信发送</string>
+    <string name="sms_send_confirm_body">收件人：%1$s\n\n正文：\n%2$s\n\n确认后仅执行一次前台请求；结果未知时不会自动重试。</string>
+    <string name="sms_send_confirm">确认发送一次</string>
+    <string name="cancel">取消</string>
+    <string name="sms_submitted">网关已确认提交至短信模块；这不代表对方已收到。操作：%1$s</string>
+    <string name="sms_not_submitted">网关明确确认本次未提交，可在新的人工确认后创建新操作。操作：%1$s；结果：%2$s</string>
+    <string name="sms_unknown">发送结果未知，已锁定新发送且绝不会自动重试。只能手动核验此操作：%1$s</string>
+    <string name="sms_prepared">发送 POST 尚未开始，但准备记录仍在。可手动核验或明确丢弃：%1$s</string>
+    <string name="sms_not_found">账本未找到操作 %1$s；仍不会自动解锁。人工确认后才可关闭记录。</string>
+    <string name="sms_terminal">上一操作已终结：%1$s（HTTP %2$d，%3$s）。</string>
+    <string name="sms_guard_empty">没有发送保护记录。发送仍需先读取具备 sms.send 的会话。</string>
+    <string name="sms_journal_failed">本地发送保护记录无法可靠读取或写入，发送已禁用：%1$s</string>
+    <string name="sms_query_failed">核验失败，原 unknown 状态保持不变：%1$s</string>
+    <string name="sms_close_prepared_title">丢弃未开始的操作？</string>
+    <string name="sms_close_prepared_body">本地记录表明最终短信 POST 尚未开始。丢弃只关闭此记录，不会发送短信。</string>
+    <string name="sms_close_not_found_title">确认关闭未找到的操作？</string>
+    <string name="sms_close_not_found_body">服务端账本未找到该操作，但这不能证明短信未发送。请先人工核对短信历史或运营侧记录；确认后关闭才可在新的二次确认下创建新操作。系统不会自动重发旧短信。</string>
+    <string name="sms_close_confirm">确认关闭</string>
+</resources>

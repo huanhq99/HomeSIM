@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#071426">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MacCellular">
+  <title>MacCellular</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css?v=20260817-remote8">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-lockup">
+      <img src="icon.svg" alt="" class="brand-mark">
+      <div>
+        <h1>MacCellular</h1>
+        <span class="kicker">你的私人蜂窝电话</span>
+      </div>
+    </div>
+    <button id="refresh" class="icon" type="button" aria-label="刷新" title="刷新">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 11V5m0 6h-6"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <section id="home" class="panel active home-panel">
+      <article class="line-card" aria-live="polite">
+        <div class="line-card-head">
+          <span class="eyebrow">当前线路</span>
+          <button id="edit-line" class="text-button" type="button">编辑名称</button>
+        </div>
+        <div class="line-main">
+          <div class="line-sim" aria-hidden="true"><span>SIM</span></div>
+          <div>
+            <h2 id="line-label">家庭主卡</h2>
+            <p id="line-status"><span id="gateway-dot" class="dot"></span><span id="gateway-state">正在连接家中 Mac</span></p>
+          </div>
+        </div>
+        <div class="line-facts">
+          <span><small>连接</small><strong id="line-transport">公网</strong></span>
+          <span><small>语音</small><strong id="line-voice">检查中</strong></span>
+          <span><small>短信</small><strong id="line-sms">检查中</strong></span>
+        </div>
+        <form id="line-editor" class="inline-editor" hidden>
+          <label for="line-label-input">这台模块在本设备上的名称</label>
+          <div><input id="line-label-input" maxlength="24" autocomplete="off"><button type="submit">保存</button><button id="cancel-line-edit" type="button">取消</button></div>
+          <small>目前是本设备昵称；多模块统一管理将在服务端线路列表中实现。</small>
+        </form>
+      </article>
+
+      <div class="quick-actions" aria-label="快捷操作">
+        <button id="quick-dial" type="button"><span class="quick-icon call">☎</span><strong>拨打电话</strong><small>打开拨号盘</small></button>
+        <button id="quick-message" type="button"><span class="quick-icon message">✉</span><strong>发送短信</strong><small>新建信息</small></button>
+      </div>
+
+      <section id="incoming-call-push" class="push-card" aria-live="polite" hidden>
+        <div class="feature-icon">◌</div>
+        <div><strong>后台来电提醒</strong><small id="incoming-call-push-status">收到来电时会显示通知；接听仍需回到本页面。</small></div>
+        <button id="incoming-call-push-toggle" class="secondary" type="button">开启</button>
+      </section>
+
+      <section class="overview-card">
+        <div class="section-head"><div><h2>今天</h2><small id="home-updated">正在获取状态</small></div></div>
+        <div class="overview-grid">
+          <button id="home-calls" type="button"><strong id="home-call-count">0</strong><small>最近通话</small><span id="home-missed">无未接</span></button>
+          <button id="home-messages" type="button"><strong id="home-message-count">0</strong><small>已存短信</small><span id="home-conversation-count">0 个会话</span></button>
+          <button id="home-recordings" type="button"><strong id="home-recording-count">0</strong><small>通话录音</small><span>手机与 Mac</span></button>
+        </div>
+      </section>
+
+      <details class="gateway-card">
+        <summary><span>连接详情</span><small id="gateway-detail">正在建立安全连接</small></summary>
+        <div class="gateway-details-body"><span id="identity" class="identity">--</span><button id="notify" class="secondary" type="button">开启前台通知</button></div>
+      </details>
+    </section>
+
+    <section id="calls" class="panel">
+      <article id="active-call" class="call-card" hidden>
+        <div class="call-avatar" aria-hidden="true">☎</div>
+        <span id="call-state">来电</span>
+        <strong id="call-number">未知号码</strong>
+        <small id="call-duration"></small>
+        <div id="call-journey" class="call-journey" aria-live="polite">
+          <div class="call-progress" aria-label="通话连接进度">
+            <span data-call-step="line"><i></i><small>蜂窝线路</small></span>
+            <span data-call-step="media"><i></i><small>音频链路</small></span>
+            <span data-call-step="live"><i></i><small>双向通话</small></span>
+          </div>
+          <div class="call-focus">
+            <span id="call-visual-icon" class="call-visual-icon" aria-hidden="true">•</span>
+            <div><strong id="call-visual-title">等待通话</strong><small id="call-visual-detail">状态更新后会显示在这里</small></div>
+          </div>
+          <div id="call-audio-meter" class="call-audio-meter" hidden>
+            <div class="audio-meter-row"><span>对方声音</span><div id="remote-audio-wave" class="audio-wave" aria-label="对方音量"></div><small id="remote-audio-label">等待声音</small></div>
+            <div class="audio-meter-row"><span>我的麦克风</span><div id="local-audio-wave" class="audio-wave" aria-label="麦克风音量"></div><small id="local-audio-label">等待声音</small></div>
+          </div>
+        </div>
+        <div class="call-actions">
+          <button id="prepare-media" class="secondary" type="button">准备通话</button>
+          <button id="answer" class="answer" type="button">接听</button>
+          <button id="reject" class="danger" type="button">拒接</button>
+          <button id="hangup" class="danger" type="button" hidden>挂断</button>
+          <button id="reconcile-voice" class="secondary" type="button" hidden>核对结果</button>
+        </div>
+        <div id="in-call-tools" class="in-call-tools" hidden>
+          <button id="call-mute" type="button"><span>♪</span><small>静音</small></button>
+          <button id="call-keypad" type="button"><span>⌨</span><small>键盘</small></button>
+          <button id="call-record" type="button"><span>●</span><small>录音</small></button>
+        </div>
+        <p id="media-state" class="media-state">等待来电</p>
+      </article>
+
+      <form id="dial-form" class="dial-card" autocomplete="off">
+        <div class="dial-heading"><label for="dial-number">拨号</label><small id="dial-help">正在读取当前语音能力。</small></div>
+        <div class="dial-row">
+          <input id="dial-number" type="text" inputmode="none" autocomplete="off" placeholder="电话号码" aria-label="已输入的电话号码" readonly required>
+          <button id="dial-delete" type="button" aria-label="删除一位">⌫</button>
+        </div>
+        <div id="dial-pad" class="dial-pad">
+          <button type="button"><strong>1</strong><small>&nbsp;</small></button><button type="button"><strong>2</strong><small>ABC</small></button><button type="button"><strong>3</strong><small>DEF</small></button>
+          <button type="button"><strong>4</strong><small>GHI</small></button><button type="button"><strong>5</strong><small>JKL</small></button><button type="button"><strong>6</strong><small>MNO</small></button>
+          <button type="button"><strong>7</strong><small>PQRS</small></button><button type="button"><strong>8</strong><small>TUV</small></button><button type="button"><strong>9</strong><small>WXYZ</small></button>
+          <button type="button"><strong>*</strong><small>&nbsp;</small></button><button type="button"><strong>0</strong><small>+</small></button><button type="button"><strong>#</strong><small>&nbsp;</small></button>
+        </div>
+        <button class="dial-submit" type="submit" aria-label="拨号"><span>☎</span></button>
+      </form>
+
+      <section class="history-card">
+        <div class="section-head"><h2>最近通话</h2><small id="missed-count"></small></div>
+        <div id="call-history" class="empty">暂无通话记录</div>
+      </section>
+    </section>
+
+    <section id="messages" class="panel">
+      <div class="page-heading"><div><span class="eyebrow">信息</span><h2>短信</h2></div><button id="show-compose" class="primary-compact" type="button">＋ 新短信</button></div>
+      <form id="new-message" class="compose-card" autocomplete="off" hidden>
+        <div class="section-head"><div><h2>新短信</h2><small>通过当前线路发送</small></div><button id="close-compose" class="icon" type="button" aria-label="关闭">×</button></div>
+        <input id="sms-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="接收号码" required>
+        <textarea id="sms-text" maxlength="1000" autocomplete="off" placeholder="短信内容" required></textarea>
+        <button type="submit">发送短信</button>
+      </form>
+      <section class="messages-card">
+        <div class="section-head">
+          <div><h2>全部会话</h2><small id="sms-meta">--</small></div>
+          <button id="sms-refresh" class="secondary" type="button">同步</button>
+        </div>
+        <p id="sms-summary" class="sms-summary">正在读取短信记录</p>
+        <div id="conversations" class="empty">暂无短信</div>
+      </section>
+    </section>
+
+    <section id="recordings" class="panel">
+      <div class="page-heading"><div><span class="eyebrow">双端保存</span><h2>通话录音</h2></div></div>
+      <section class="recordings-card">
+        <div class="section-head">
+          <div><h2>通话录音</h2><small>手机与家中 Mac 双副本</small></div>
+        </div>
+        <p class="recording-notice">通话接通后自动录音。手机保留可播放副本，家中 Mac 同步保存归档副本。</p>
+        <div id="recording-list" class="empty">暂无录音</div>
+      </section>
+    </section>
+  </main>
+
+  <nav class="tabs bottom-tabs" aria-label="主要功能">
+    <button class="active" type="button" data-tab="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/></svg><small>首页</small></button>
+    <button type="button" data-tab="calls"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.1.36 2.3.54 3.6.54a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.3.18 2.5.54 3.6a1 1 0 0 1-.24 1Z"/></svg><small>电话</small></button>
+    <button type="button" data-tab="messages"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg><small>短信</small></button>
+    <button type="button" data-tab="recordings"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="13" rx="4"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg><small>录音</small></button>
+  </nav>
+
+  <dialog id="thread-dialog">
+    <form method="dialog" class="thread-shell" autocomplete="off">
+      <header><strong id="thread-peer">短信</strong><button value="close" class="icon" aria-label="关闭">×</button></header>
+      <div id="thread-list"></div>
+      <div class="thread-reply">
+        <input id="thread-text" maxlength="1000" autocomplete="off" placeholder="回复短信">
+        <button id="thread-send" type="button">发送</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status"></div>
+  <div id="call-ended-banner" class="call-ended-banner" role="status" hidden>
+    <strong>通话已结束</strong><small id="call-ended-detail"></small>
+  </div>
+  <audio id="remote-audio" class="remote-audio" autoplay playsinline></audio>
+  <script src="media-client.js?v=20260817-remote27" defer></script>
+  <script src="call-recorder.js?v=20260817-remote2" defer></script>
+  <script src="external-voice-client.js?v=20260815-remote2" defer></script>
+  <script src="sms-state.js?v=20260814-remote1" defer></script>
+  <script src="session-presentation.js?v=20260815-remote1" defer></script>
+  <script src="public-voice-ui.js?v=20260816-remote9" defer></script>
+  <script src="incoming-call-push.js?v=20260815-remote1" defer></script>
+  <script src="app.js?v=20260817-remote39" defer></script>
+</body>
+</html>

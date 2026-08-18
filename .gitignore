@@ -1,0 +1,84 @@
+.DS_Store
+._*
+
+# Build outputs
+/dist/
+/bin/
+**/.build/
+**/.build-*/
+**/dist/
+/djonehub-macos
+**/.build-stale/
+backups/
+.cache/
+*.test
+*.out
+**/build/
+**/.gradle/
+**/local.properties
+*.apk
+*.aab
+
+# Local runtime data and logs
+*.log
+*.pid
+/local/
+/recordings/
+/runtime-data/
+/hardware-snapshots/private/
+*.pcap
+*.pcapng
+*.atsession
+
+# Legacy/research-only device-side runtime is forbidden from Git and releases.
+*.ko
+*.armv7
+**/ModuleVoice/
+**/ModuleVoice.previous.*/
+.local-voice-runtime/
+voice-runtime-local/
+MaVo*.zip
+MaVo*.tar
+MaVo*.tar.gz
+MaVo*.tar.bz2
+MaVo*.tgz
+MaVo*.dmg
+*ModuleVoice*.zip
+*ModuleVoice*.tar*
+*module-before-v*.json
+
+# Secrets, identities, signing material and operator configuration.
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.mobileprovision
+*.key
+*.csr
+*.cer
+*.crt
+*.jks
+*.keystore
+*imei*
+*imsi*
+*iccid*
+*eid*
+*apn*
+*phone-number*
+*sms-export*
+*call-recording*
+
+# These are source class names, not SIM EID exports. Keep the broad privacy
+# exclusion above while ensuring a normal `git add` cannot omit required code.
+!android/native-client/src/main/java/org/maccellular/gateway/nativeclient/DeviceIdentity.java
+!android/native-client/src/test/java/org/maccellular/gateway/nativeclient/DeviceIdentityTest.java
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+DerivedData/
+
+# Frontend dependencies are not used by the native DJOneHub page
+node_modules/

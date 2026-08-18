@@ -1,0 +1,9 @@
+ASTERISK_VERSION=22.10.1
+ASTERISK_URL=https://downloads.asterisk.org/pub/telephony/asterisk/asterisk-22.10.1.tar.gz
+ASTERISK_SHA256=0953564c44fa49827f3c9d70ca6e80db83828c9848440852c6be44c961855353
+ASTERISK_IMAGE_REF=maccellular-asterisk@sha256:d4167acc2bfdd581e23d6d532df76858d8f7c752f014567e2a3717c9d3359f51
+PJPROJECT_VERSION=2.17
+PJPROJECT_URL=https://raw.githubusercontent.com/asterisk/third-party/master/pjproject/2.17/pjproject-2.17.tar.bz2
+PJPROJECT_SHA256=04b2eb1f0f01aa0ad1945b167171843448a51aa6b7c3e806496d434f13a112b7
+DEBIAN_IMAGE=debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+DOCKERFILE_FRONTEND=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e

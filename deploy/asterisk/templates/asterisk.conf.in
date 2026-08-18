@@ -1,0 +1,27 @@
+[directories]
+astetcdir => /etc/asterisk
+astmoddir => /usr/lib/asterisk/modules
+astvarlibdir => /var/lib/asterisk
+; Keep image-supplied documentation and ARI schemas visible under
+; /var/lib/asterisk. Only mutable database/key state uses the private bind.
+astdbdir => /var/lib/asterisk-private
+astkeydir => /var/lib/asterisk-private
+astdatadir => /var/lib/asterisk
+astagidir => /var/lib/asterisk/agi-bin
+astspooldir => /var/spool/asterisk
+astrundir => /run/asterisk
+astlogdir => /var/log/asterisk
+
+[options]
+entityid = @@ENTITY_ID@@
+live_dangerously = no
+hideconnect = yes
+lockconfdir = yes
+rungroup =
+runuser =
+defaultlanguage = en
+
+[compat]
+pbx_realtime = 1.6
+res_agi = 1.6
+app_set = 1.6

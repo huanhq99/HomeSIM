@@ -1,0 +1,68 @@
+services:
+  asterisk:
+    profiles: ["explicit-pbx"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ASTERISK_VERSION: "22.10.1"
+        ASTERISK_SHA256: "0953564c44fa49827f3c9d70ca6e80db83828c9848440852c6be44c961855353"
+        PJPROJECT_VERSION: "2.17"
+        PJPROJECT_SHA256: "04b2eb1f0f01aa0ad1945b167171843448a51aa6b7c3e806496d434f13a112b7"
+        DEBIAN_IMAGE: "debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
+    image: "${MACCELLULAR_PBX_IMAGE_REF:?missing pinned PBX image reference}"
+    pull_policy: never
+    init: true
+    # Fail closed until the long-lived Adapter is proven safe across a PBX
+    # replacement before the old ARI event WebSocket reports EOF. A joint
+    # supervisor may replace this only after that mutation-ABA gate passes.
+    restart: "no"
+    read_only: true
+    user: "${MACCELLULAR_PBX_UID:?run generate-config.sh --apply}:${MACCELLULAR_PBX_GID:?run generate-config.sh --apply}"
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    command: ["-f", "-vvv", "-C", "/etc/asterisk/asterisk.conf"]
+    networks:
+      pbx-runtime:
+        ipv4_address: "${MACCELLULAR_PBX_CONTAINER_IPV4:?missing fixed PBX container IPv4}"
+    ports:
+      # Asterisk binds 0.0.0.0 inside its isolated container so Docker can
+      # reach it; ARI is published on host loopback only.
+      - "127.0.0.1:${MACCELLULAR_PBX_ARI_PORT:?missing ARI port}:8088/tcp"
+      # SIP and RTP require an exact private host address. Wildcard host
+      # publication is deliberately impossible in this compose contract.
+      - "${MACCELLULAR_PBX_SIP_BIND_IP:?missing exact SIP bind IP}:${MACCELLULAR_PBX_SIP_PORT:?missing SIP port}:5060/udp"
+      - "${MACCELLULAR_PBX_SIP_BIND_IP:?missing exact SIP bind IP}:${MACCELLULAR_PBX_RTP_MIN:?missing RTP min}-${MACCELLULAR_PBX_RTP_MAX:?missing RTP max}:${MACCELLULAR_PBX_RTP_MIN:?missing RTP min}-${MACCELLULAR_PBX_RTP_MAX:?missing RTP max}/udp"
+    volumes:
+      - type: bind
+        source: "${MACCELLULAR_PBX_ROOT:?missing generated root}/config"
+        target: /etc/asterisk
+        read_only: true
+      - type: bind
+        source: "${MACCELLULAR_PBX_ROOT:?missing generated root}/data"
+        target: /var/lib/asterisk-private
+      - type: bind
+        source: "${MACCELLULAR_PBX_ROOT:?missing generated root}/log"
+        target: /var/log/asterisk
+      - type: bind
+        source: "${MACCELLULAR_PBX_ROOT:?missing generated root}/spool"
+        target: /var/spool/asterisk
+    tmpfs:
+      - "/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777"
+      - "/run/asterisk:rw,nosuid,nodev,size=4m,mode=0700,uid=${MACCELLULAR_PBX_UID:?missing uid},gid=${MACCELLULAR_PBX_GID:?missing gid}"
+    healthcheck:
+      test: ["CMD", "/usr/sbin/asterisk", "-rx", "core waitfullybooted"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+networks:
+  pbx-runtime:
+    driver: bridge
+    internal: false
+    ipam:
+      driver: default
+      config:
+        - subnet: "${MACCELLULAR_PBX_CONTAINER_SUBNET:?missing fixed PBX container subnet}"

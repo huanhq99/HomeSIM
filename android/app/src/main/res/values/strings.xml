@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MacCellular</string>
+    <string name="connecting">正在通过 Tailscale 连接家中 Mac…</string>
+    <string name="retry">重新连接</string>
+    <string name="microphone_confirmation_title">允许本次前台通话使用麦克风？</string>
+    <string name="microphone_confirmation_message">只授权当前页面的这一条媒体会话；退到后台会立即销毁页面并停止采集。</string>
+    <string name="microphone_allow_once">仅本次允许</string>
+    <string name="microphone_granted_retry">系统麦克风权限已授权，请再次点击连接音频。</string>
+    <string name="microphone_denied">未获得麦克风权限，通话媒体未启动。</string>
+</resources>

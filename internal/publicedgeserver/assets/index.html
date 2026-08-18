@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#101310">
+  <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
+  <title>DJOneHub · 只读状态</title>
+  <link rel="stylesheet" href="/assets/public-mobile-v1.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <p class="eyebrow">家庭 4G 网关</p>
+      <h1>DJOneHub</h1>
+      <p class="lede">安全的远程只读状态</p>
+    </header>
+
+    <section class="status-panel" aria-labelledby="connection-title">
+      <div class="status-heading">
+        <div>
+          <p class="section-label">连接状态</p>
+          <h2 id="connection-title">正在刷新</h2>
+        </div>
+        <div class="status-badge" id="status-badge" data-tone="loading">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-badge-text">连接中</span>
+        </div>
+      </div>
+      <p class="status-detail" id="status-detail" role="status" aria-live="polite">
+        正在读取家中网关的最新状态。
+      </p>
+      <dl class="timing">
+        <div>
+          <dt>最后收到</dt>
+          <dd id="received-at">—</dd>
+        </div>
+        <div>
+          <dt>状态版本</dt>
+          <dd id="revision">—</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="state-grid" aria-label="网关概要状态">
+      <article class="state-card">
+        <span class="card-index" aria-hidden="true">01</span>
+        <p>网关服务</p>
+        <strong id="service-state">—</strong>
+        <small>仅显示服务健康等级</small>
+      </article>
+      <article class="state-card">
+        <span class="card-index" aria-hidden="true">02</span>
+        <p>通话状态</p>
+        <strong id="call-state">—</strong>
+        <small>不包含号码或通话媒体</small>
+      </article>
+      <article class="state-card">
+        <span class="card-index" aria-hidden="true">03</span>
+        <p>短信服务</p>
+        <strong id="sms-state">—</strong>
+        <small>不包含发件人或短信内容</small>
+      </article>
+    </section>
+
+    <footer>
+      <span class="privacy-mark" aria-hidden="true"></span>
+      <span>只读界面 · 页面转入后台后会立即清除状态</span>
+    </footer>
+  </main>
+  <script defer src="/assets/public-mobile-v1.js"></script>
+</body>
+</html>

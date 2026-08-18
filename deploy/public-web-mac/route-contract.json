@@ -1,0 +1,6 @@
+{
+  "hostname": "phone.example.com",
+  "service": "http://127.0.0.1:7578",
+  "access_required": true,
+  "purpose": "communications-pwa"
+}

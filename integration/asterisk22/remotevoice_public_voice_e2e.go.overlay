@@ -1,0 +1,12 @@
+//go:build public_voice_e2e
+
+package remotevoice
+
+// PublicVoiceE2EAllowLoopback is compiled only through the public-voice E2E
+// overlay. It keeps the production Config API unable to opt into loopback
+// candidates while allowing the disposable Asterisk/WebRTC acceptance harness
+// to run without a Tailnet dependency.
+func PublicVoiceE2EAllowLoopback(cfg Config) Config {
+	cfg.allowLoopbackForTests = true
+	return cfg
+}

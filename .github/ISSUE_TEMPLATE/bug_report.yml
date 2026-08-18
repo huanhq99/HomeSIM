@@ -1,0 +1,54 @@
+name: Bug report
+description: 报告可复现的 MacCellular 问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿提交真实电话号码、短信、录音、SIM 标识、联系人、Access/Tunnel/TURN/VAPID 凭据或私人域名。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题与预期结果
+      description: 说明发生了什么，以及你期望发生什么。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 最短复现步骤
+      description: 请使用脱敏或测试数据。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: MacCellular 版本
+      placeholder: 例如 1.0.0-rc.1
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: Mac 型号、macOS、模块与固件、浏览器、Wi-Fi/蜂窝网络；不要填写 IMEI/ICCID/IMSI。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 已脱敏日志
+      description: 只贴与故障时间相邻的必要片段；不确定时先不要上传。
+      render: shell
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我已删除号码、短信、录音、SIM 标识、私人域名和全部凭据。
+          required: true
+        - label: 我合法控制用于复现的 Mac、模块、SIM、号码和账户。
+          required: true
+        - label: 本问题不涉及卡池、改号、批量拨号、群发短信、验证码代收、骚扰、诈骗、绕过运营商限制或线路转售。
+          required: true

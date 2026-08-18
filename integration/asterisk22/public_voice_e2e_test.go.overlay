@@ -1,0 +1,976 @@
+//go:build public_voice_e2e
+
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/iniwex5/vohive/internal/remotevoice"
+	"github.com/iniwex5/vohive/internal/sipgateway"
+	asteriskadapter "github.com/iniwex5/vohive/internal/sipgateway/asterisk"
+	"github.com/pion/interceptor"
+	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
+)
+
+const (
+	e2eGatewayPatternSample = int16(1500)
+	e2eClientPatternSample  = int16(-1500)
+)
+
+// TestPublicVoiceE2EHarnessContract is intentionally hermetic. It compiles the
+// complete overlay and checks the parsers/packet builders that the opt-in live
+// test uses, without claiming that Asterisk or a media path ran.
+func TestPublicVoiceE2EHarnessContract(t *testing.T) {
+	invite := e2eBuildInvite("127.0.0.2", 35060, 36000, "synthetic-call", "synthetic-from")
+	message, err := e2eParseSIP([]byte(invite))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.start != "INVITE sip:s@127.0.0.1:25060 SIP/2.0" ||
+		message.header["content-type"] != "application/sdp" ||
+		!strings.Contains(message.body, "m=audio 36000 RTP/AVP 0") ||
+		!strings.Contains(message.body, "a=rtpmap:0 PCMU/8000") {
+		t.Fatalf("synthetic INVITE contract drifted: start=%q headers=%v body=%q",
+			message.start, message.header, message.body)
+	}
+	declared, err := strconv.Atoi(message.header["content-length"])
+	if err != nil || declared != len(message.body) {
+		t.Fatalf("INVITE content length=%q body=%d err=%v", message.header["content-length"], len(message.body), err)
+	}
+
+	sdp := "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Asterisk\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 26002 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\n"
+	remote, err := e2eParseSDPRTP(sdp)
+	if err != nil || remote.String() != "127.0.0.1:26002" {
+		t.Fatalf("SDP RTP=%v err=%v", remote, err)
+	}
+
+	payload := bytes.Repeat([]byte{e2ePCMUByte(e2eGatewayPatternSample)}, remotevoice.FrameSamples)
+	packet := e2eBuildRTP(7, 1120, 0x10203040, payload)
+	parsed, ok := e2eParseRTP(packet)
+	if !ok || !bytes.Equal(parsed, payload) {
+		t.Fatal("RTP PCMU packet did not round trip")
+	}
+	packet[1] = 8
+	if _, ok := e2eParseRTP(packet); ok {
+		t.Fatal("non-PCMU RTP payload type was accepted")
+	}
+
+	network := remotevoice.PublicVoiceE2EAllowLoopback(remotevoice.Config{
+		AllowedInterfaces: []string{"synthetic-loopback"}, AllowedLocalCIDRs: []string{"127.0.0.0/8"},
+		AllowedRemoteCIDRs: []string{"127.0.0.1/32"}, UDPMin: 41000, UDPMax: 41015,
+	})
+	if !validExternalVoiceNetworkBase(network) {
+		t.Fatal("E2E loopback network no longer satisfies the external voice base contract")
+	}
+}
+
+// TestPublicVoiceE2EAsterisk22SyntheticCall is run only by the explicit live
+// harness. It does not skip: absent environment, Asterisk, SIP, RTP, WebRTC or
+// cleanup evidence is a failure.
+func TestPublicVoiceE2EAsterisk22SyntheticCall(t *testing.T) {
+	if os.Getenv("MACCELLULAR_PUBLIC_VOICE_E2E") != "1" {
+		t.Fatal("MACCELLULAR_PUBLIC_VOICE_E2E=1 is required for the live acceptance test")
+	}
+	testCtx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	defer cancel()
+
+	password := e2eReadOneLine(t, e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_PASSWORD_FILE"))
+	adapter, err := asteriskadapter.New(testCtx, asteriskadapter.Config{
+		GatewayID: "synthetic-e2e-gateway", BaseURL: e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_URL"),
+		Application:      e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_APPLICATION"),
+		IncomingArgument: "incoming", IncomingContext: "from-cellular", IncomingEndpoint: "cellular-gateway",
+		Username: e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_USERNAME"), Password: password,
+		ExpectedVersion:  e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_VERSION"),
+		ExpectedEntityID: e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_ENTITY_ID"),
+		IncomingPolicyID: "djonehub-incoming-v1", RequireCleanStartup: true,
+		HTTPTimeout: 5 * time.Second, PrepareTimeout: 10 * time.Second,
+		ConfirmTimeout: 5 * time.Second, IOTimeout: 5 * time.Second,
+	})
+	password = ""
+	if err != nil {
+		t.Fatalf("connect live Asterisk adapter: %v", err)
+	}
+
+	loopbackInterface := e2eLoopbackInterface(t)
+	network := remotevoice.PublicVoiceE2EAllowLoopback(remotevoice.Config{
+		AllowedInterfaces: []string{loopbackInterface}, AllowedLocalCIDRs: []string{"127.0.0.0/8"},
+		AllowedRemoteCIDRs: []string{"127.0.0.1/32"}, UDPMin: 41000, UDPMax: 41031,
+		AnswerTimeout: 8 * time.Second,
+	})
+	journal := &e2eMutationJournal{pending: make(map[string]sipgateway.PendingMutation)}
+	runtime, err := newExternalVoiceRuntime(context.Background(), sipVoiceRuntimeConfig{
+		GatewayID: "synthetic-e2e-gateway", Adapter: adapter, Journal: journal,
+		Evidence: e2eMutationEvidence, Network: network, AllowAnswer: true, AllowEnd: true,
+		Freshness: 2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("start external voice v2 runtime: %v", err)
+	}
+	defer runtime.Close()
+
+	instance, handler, csrf := newRemoteTestApp(t, true,
+		"status.read", "calls.read", "calls.media", "calls.control", "calls.hangup")
+	instance.sipVoice = runtime
+
+	e2eWaitFor(t, testCtx, "external voice runtime connection", func() bool {
+		status := e2eVoiceSnapshot(t, handler)
+		return status.Health == "connected" && status.Call == nil
+	})
+
+	endpointURL := e2eRequiredEnv(t, "MACCELLULAR_SYNTHETIC_ENDPOINT_URL")
+	e2eStartSyntheticInvite(t, testCtx, endpointURL)
+
+	var incoming sipgateway.PublicCallSnapshot
+	e2eWaitFor(t, testCtx, "v2 incoming snapshot", func() bool {
+		status := e2eVoiceSnapshot(t, handler)
+		if status.Call == nil || status.Call.Phase != sipgateway.PhaseIncomingRinging {
+			return false
+		}
+		incoming = *status.Call
+		return true
+	})
+
+	browser, offerSDP, err := newE2EBrowser(loopbackInterface, e2eGatewayPatternSample, e2eClientPatternSample)
+	if err != nil {
+		t.Fatalf("create synthetic WebRTC browser: %v", err)
+	}
+	defer browser.Close()
+	offerRequest := externalVoiceOfferRequest{
+		Version: 2, Call: incoming.Call, ExpectedRevision: incoming.Revision,
+		ClientNonce: "synthetic_e2e_nonce_0001", SDPOffer: offerSDP,
+	}
+	offerBody := e2eJSON(t, offerRequest)
+	offerResponse := e2eMutationRequest(t, handler, csrf, remoteVoiceV2OfferPath, offerBody,
+		"synthetic-e2e-offer-key", "calls.read", "calls.media")
+	if offerResponse.Code != http.StatusOK {
+		t.Fatalf("v2 offer=%d %s", offerResponse.Code, offerResponse.Body.String())
+	}
+	var offered externalVoiceOfferResponse
+	if err := json.Unmarshal(offerResponse.Body.Bytes(), &offered); err != nil || offered.Version != 2 ||
+		offered.AnswerSDP == "" || offered.Call.Media == nil {
+		t.Fatalf("decode v2 offer: err=%v body=%s", err, offerResponse.Body.String())
+	}
+	if err := browser.SetAnswer(offered.AnswerSDP); err != nil {
+		t.Fatalf("apply WebRTC answer: %v", err)
+	}
+	if err := browser.Start(testCtx); err != nil {
+		t.Fatalf("start WebRTC PCMU flow: %v", err)
+	}
+
+	var ready sipgateway.PublicCallSnapshot
+	e2eWaitFor(t, testCtx, "v2 media-ready proof", func() bool {
+		status := e2eVoiceSnapshot(t, handler)
+		if status.Call == nil || status.Call.Media == nil || !status.OwnedByRequester ||
+			status.Call.Phase != sipgateway.PhaseMediaReady || !status.Call.Media.Prepared {
+			return false
+		}
+		ready = *status.Call
+		return true
+	})
+
+	answerBody := e2eJSON(t, externalVoiceCallRequest{
+		Version: 2, Call: ready.Call, ExpectedRevision: ready.Revision,
+		MediaLeaseID: ready.Media.LeaseID,
+	})
+	answerResponse := e2eMutationRequest(t, handler, csrf, remoteVoiceV2AnswerPath, answerBody,
+		"synthetic-e2e-answer-command-0001", "calls.control", "calls.media")
+	if answerResponse.Code != http.StatusOK || !strings.Contains(answerResponse.Body.String(), `"code":"completed"`) {
+		t.Fatalf("v2 answer=%d %s", answerResponse.Code, answerResponse.Body.String())
+	}
+	e2eWaitFor(t, testCtx, "SIP 200/ACK answer", func() bool {
+		return e2eSyntheticEndpointStatus(t, testCtx, endpointURL).Answered
+	})
+	e2eAwaitSignal(t, testCtx, browser.gotGatewayPattern, "gateway-to-browser PCMU pattern")
+	e2eWaitFor(t, testCtx, "browser-to-gateway PCMU pattern", func() bool {
+		return e2eSyntheticEndpointStatus(t, testCtx, endpointURL).GotClientPattern
+	})
+
+	var verified sipgateway.PublicCallSnapshot
+	e2eWaitFor(t, testCtx, "bidirectional active transport proof", func() bool {
+		status := e2eVoiceSnapshot(t, handler)
+		if status.Call == nil || status.Call.Media == nil ||
+			status.Call.Phase != sipgateway.PhaseActiveTransportVerified ||
+			!status.Call.Media.BidirectionalFresh || !status.Call.Media.Activated {
+			return false
+		}
+		verified = *status.Call
+		return true
+	})
+
+	endBody := e2eJSON(t, externalVoiceCallRequest{
+		Version: 2, Call: verified.Call, ExpectedRevision: verified.Revision,
+		MediaLeaseID: verified.Media.LeaseID,
+	})
+	endResponse := e2eMutationRequest(t, handler, csrf, remoteVoiceV2EndPath, endBody,
+		"synthetic-e2e-end-command-0001", "calls.hangup", "calls.media")
+	if endResponse.Code != http.StatusOK || !strings.Contains(endResponse.Body.String(), `"code":"completed"`) {
+		t.Fatalf("v2 end=%d %s", endResponse.Code, endResponse.Body.String())
+	}
+	e2eWaitFor(t, testCtx, "SIP BYE/200 cleanup", func() bool {
+		return e2eSyntheticEndpointStatus(t, testCtx, endpointURL).Bye
+	})
+	e2eWaitFor(t, testCtx, "v2 ended snapshot", func() bool {
+		status := e2eVoiceSnapshot(t, handler)
+		return status.Call != nil && status.Call.Phase == sipgateway.PhaseEnded && status.Call.Media == nil
+	})
+	e2eWaitFor(t, testCtx, "empty Asterisk channel and bridge sets", func() bool {
+		return e2eARICollectionEmpty(t, "channels") && e2eARICollectionEmpty(t, "bridges")
+	})
+}
+
+type e2eSyntheticEndpointSnapshot struct {
+	Invited          bool   `json:"invited"`
+	Answered         bool   `json:"answered"`
+	Bye              bool   `json:"bye"`
+	GotClientPattern bool   `json:"got_client_pattern"`
+	Error            string `json:"error"`
+}
+
+func e2eStartSyntheticInvite(t *testing.T, ctx context.Context, base string) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/invite", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("start containerized synthetic SIP INVITE: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		t.Fatalf("start containerized synthetic SIP INVITE=%d %s", response.StatusCode, body)
+	}
+	status := e2eSyntheticEndpointStatus(t, ctx, base)
+	if !status.Invited {
+		t.Fatal("containerized synthetic endpoint did not record its SIP INVITE")
+	}
+}
+
+func e2eSyntheticEndpointStatus(t *testing.T, ctx context.Context, base string) e2eSyntheticEndpointSnapshot {
+	t.Helper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("read containerized synthetic endpoint status: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("containerized synthetic endpoint status=%d", response.StatusCode)
+	}
+	var snapshot e2eSyntheticEndpointSnapshot
+	if err := json.NewDecoder(io.LimitReader(response.Body, 16<<10)).Decode(&snapshot); err != nil {
+		t.Fatalf("decode containerized synthetic endpoint status: %v", err)
+	}
+	if snapshot.Error != "" {
+		t.Fatalf("containerized synthetic endpoint failed: %s", snapshot.Error)
+	}
+	return snapshot
+}
+
+type e2eMutationJournal struct {
+	mu      sync.Mutex
+	next    uint64
+	pending map[string]sipgateway.PendingMutation
+}
+
+func (j *e2eMutationJournal) Arm(pending sipgateway.PendingMutation) (string, error) {
+	if err := pending.Validate(); err != nil {
+		return "", err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.next++
+	id := fmt.Sprintf("e2e-recovery-%032d", j.next)
+	j.pending[id] = pending
+	return id, nil
+}
+
+func (j *e2eMutationJournal) Resolve(id string, resolution sipgateway.MutationResolution) error {
+	if err := resolution.Validate(); err != nil {
+		return err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if _, ok := j.pending[id]; !ok {
+		return sipgateway.ErrInvalidMutationJournalRecord
+	}
+	delete(j.pending, id)
+	return nil
+}
+
+func e2eMutationEvidence(kind sipgateway.CommandKind, identity string, bodyHash [sha256.Size]byte) (sipgateway.MutationEvidence, error) {
+	owner := sha256.Sum256([]byte("public-voice-e2e-owner\x00" + identity))
+	requestHasher := sha256.New()
+	_, _ = requestHasher.Write([]byte("public-voice-e2e-request\x00" + string(kind) + "\x00"))
+	_, _ = requestHasher.Write(bodyHash[:])
+	var evidence sipgateway.MutationEvidence
+	evidence.OwnerDigest = owner
+	copy(evidence.RequestDigest[:], requestHasher.Sum(nil))
+	return evidence, evidence.Validate()
+}
+
+func e2eRequiredEnv(t *testing.T, name string) string {
+	t.Helper()
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		t.Fatalf("required live input %s is empty", name)
+	}
+	return value
+}
+
+func e2eReadOneLine(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := strings.TrimSuffix(string(data), "\n")
+	for index := range data {
+		data[index] = 0
+	}
+	if value == "" || strings.ContainsAny(value, "\r\n") {
+		t.Fatal("live password file must contain exactly one non-empty line")
+	}
+	return value
+}
+
+func e2eJSON(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func e2eMutationRequest(
+	t *testing.T,
+	handler http.Handler,
+	csrf, path, body, key string,
+	actions ...string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	request := remoteTestRequest(http.MethodPost, path, body, actions...)
+	authorizeRemoteMutation(request, csrf, key)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func e2eVoiceSnapshot(t *testing.T, handler http.Handler) externalVoiceStatus {
+	t.Helper()
+	request := remoteTestRequest(http.MethodGet, remoteVoiceV2SnapshotPath, "", "calls.read")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("v2 snapshot=%d %s", response.Code, response.Body.String())
+	}
+	var snapshot externalVoiceSnapshotResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil || snapshot.Version != 2 {
+		t.Fatalf("decode v2 snapshot: err=%v body=%s", err, response.Body.String())
+	}
+	return snapshot.Voice
+}
+
+func e2eWaitFor(t *testing.T, ctx context.Context, name string, ready func() bool) {
+	t.Helper()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if ready() {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for %s: %v", name, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func e2eAwaitSignal(t *testing.T, ctx context.Context, signal <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for %s: %v", name, ctx.Err())
+	}
+}
+
+func e2eARICollectionEmpty(t *testing.T, collection string) bool {
+	t.Helper()
+	base := strings.TrimRight(e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_URL"), "/")
+	request, err := http.NewRequest(http.MethodGet, base+"/"+collection, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.SetBasicAuth(
+		e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_USERNAME"),
+		e2eReadOneLine(t, e2eRequiredEnv(t, "MACCELLULAR_ASTERISK_INTEGRATION_PASSWORD_FILE")),
+	)
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return false
+	}
+	var values []json.RawMessage
+	return json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&values) == nil && len(values) == 0
+}
+
+func e2eLoopbackInterface(t *testing.T) string {
+	t.Helper()
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range interfaces {
+		if candidate.Flags&net.FlagUp == 0 || candidate.Flags&net.FlagLoopback == 0 {
+			continue
+		}
+		addresses, err := candidate.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err == nil && ip.Equal(net.ParseIP("127.0.0.1")) {
+				return candidate.Name
+			}
+		}
+	}
+	t.Fatal("no up loopback interface owns 127.0.0.1")
+	return ""
+}
+
+type e2eBrowser struct {
+	pc                *webrtc.PeerConnection
+	track             *webrtc.TrackLocalStaticSample
+	clientPayload     []byte
+	gatewayPayload    []byte
+	connected         chan struct{}
+	connectedOnce     sync.Once
+	failed            chan struct{}
+	failedOnce        sync.Once
+	gotGatewayPattern chan struct{}
+	patternOnce       sync.Once
+	done              chan struct{}
+	closeOnce         sync.Once
+	wg                sync.WaitGroup
+}
+
+func newE2EBrowser(interfaceName string, gatewaySample, clientSample int16) (*e2eBrowser, string, error) {
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType: webrtc.MimeTypePCMU, ClockRate: remotevoice.SampleRate, Channels: 1,
+		},
+		PayloadType: 0,
+	}, webrtc.RTPCodecTypeAudio); err != nil {
+		return nil, "", err
+	}
+	registry := &interceptor.Registry{}
+	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, registry); err != nil {
+		return nil, "", err
+	}
+	var settings webrtc.SettingEngine
+	settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+	settings.SetIncludeLoopbackCandidate(true)
+	settings.SetInterfaceFilter(func(name string) bool { return name == interfaceName })
+	if err := settings.SetEphemeralUDPPortRange(42000, 42031); err != nil {
+		return nil, "", err
+	}
+	api := webrtc.NewAPI(
+		webrtc.WithMediaEngine(mediaEngine), webrtc.WithSettingEngine(settings),
+		webrtc.WithInterceptorRegistry(registry),
+	)
+	pc, err := api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		return nil, "", err
+	}
+	track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
+		MimeType: webrtc.MimeTypePCMU, ClockRate: remotevoice.SampleRate, Channels: 1,
+	}, "synthetic-browser", "public-voice-e2e")
+	if err != nil {
+		_ = pc.Close()
+		return nil, "", err
+	}
+	sender, err := pc.AddTrack(track)
+	if err != nil {
+		_ = pc.Close()
+		return nil, "", err
+	}
+	browser := &e2eBrowser{
+		pc: pc, track: track,
+		clientPayload:  bytes.Repeat([]byte{e2ePCMUByte(clientSample)}, remotevoice.FrameSamples),
+		gatewayPayload: bytes.Repeat([]byte{e2ePCMUByte(gatewaySample)}, remotevoice.FrameSamples),
+		connected:      make(chan struct{}), failed: make(chan struct{}),
+		gotGatewayPattern: make(chan struct{}), done: make(chan struct{}),
+	}
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		switch state {
+		case webrtc.PeerConnectionStateConnected:
+			browser.connectedOnce.Do(func() { close(browser.connected) })
+		case webrtc.PeerConnectionStateFailed:
+			browser.failedOnce.Do(func() { close(browser.failed) })
+		}
+	})
+	pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		browser.wg.Add(1)
+		go func() {
+			defer browser.wg.Done()
+			for {
+				packet, _, err := remote.ReadRTP()
+				if err != nil {
+					return
+				}
+				if packet.PayloadType == 0 && bytes.Equal(packet.Payload, browser.gatewayPayload) {
+					browser.patternOnce.Do(func() { close(browser.gotGatewayPattern) })
+				}
+			}
+		}()
+	})
+	browser.wg.Add(1)
+	go func() {
+		defer browser.wg.Done()
+		for {
+			if _, _, err := sender.ReadRTCP(); err != nil {
+				return
+			}
+		}
+	}()
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		browser.Close()
+		return nil, "", err
+	}
+	gathered := webrtc.GatheringCompletePromise(pc)
+	if err := pc.SetLocalDescription(offer); err != nil {
+		browser.Close()
+		return nil, "", err
+	}
+	select {
+	case <-gathered:
+	case <-time.After(5 * time.Second):
+		browser.Close()
+		return nil, "", errors.New("synthetic browser ICE gathering timed out")
+	}
+	if pc.LocalDescription() == nil || pc.LocalDescription().SDP == "" {
+		browser.Close()
+		return nil, "", errors.New("synthetic browser produced no SDP offer")
+	}
+	return browser, pc.LocalDescription().SDP, nil
+}
+
+func (b *e2eBrowser) SetAnswer(answer string) error {
+	return b.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer})
+}
+
+func (b *e2eBrowser) Start(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-b.failed:
+		return errors.New("synthetic browser WebRTC connection failed")
+	case <-b.connected:
+	}
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		ticker := time.NewTicker(remotevoice.FrameMillis * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-b.done:
+				return
+			case <-ticker.C:
+				if err := b.track.WriteSample(media.Sample{
+					Data:     append([]byte(nil), b.clientPayload...),
+					Duration: remotevoice.FrameMillis * time.Millisecond,
+				}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	return nil
+}
+
+func (b *e2eBrowser) Close() {
+	b.closeOnce.Do(func() {
+		close(b.done)
+		_ = b.pc.Close()
+		b.wg.Wait()
+	})
+}
+
+type e2eSIPMessage struct {
+	start  string
+	header map[string]string
+	body   string
+}
+
+type e2eSIPEndpoint struct {
+	sip            *net.UDPConn
+	rtp            *net.UDPConn
+	sipTarget      *net.UDPAddr
+	localIP        string
+	callID         string
+	fromTag        string
+	gatewayPayload []byte
+	clientPayload  []byte
+
+	mu        sync.Mutex
+	toHeader  string
+	remoteRTP *net.UDPAddr
+
+	answered         chan struct{}
+	answeredOnce     sync.Once
+	bye              chan struct{}
+	byeOnce          sync.Once
+	gotClientPattern chan struct{}
+	clientOnce       sync.Once
+	done             chan struct{}
+	closeOnce        sync.Once
+	rtpStartOnce     sync.Once
+	wg               sync.WaitGroup
+}
+
+func newE2ESIPEndpoint(localIP string, gatewaySample, clientSample int16) (*e2eSIPEndpoint, error) {
+	ip := net.ParseIP(localIP)
+	if ip == nil || !ip.IsLoopback() {
+		return nil, errors.New("synthetic SIP endpoint requires a literal loopback IP")
+	}
+	sip, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip, Port: 0})
+	if err != nil {
+		return nil, err
+	}
+	rtp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip, Port: 0})
+	if err != nil {
+		_ = sip.Close()
+		return nil, err
+	}
+	target, err := net.ResolveUDPAddr("udp4", "127.0.0.1:25060")
+	if err != nil {
+		_ = sip.Close()
+		_ = rtp.Close()
+		return nil, err
+	}
+	endpoint := &e2eSIPEndpoint{
+		sip: sip, rtp: rtp, sipTarget: target, localIP: localIP,
+		callID: "synthetic-public-voice-e2e@loopback", fromTag: "synthetic-e2e-from",
+		gatewayPayload: bytes.Repeat([]byte{e2ePCMUByte(gatewaySample)}, remotevoice.FrameSamples),
+		clientPayload:  bytes.Repeat([]byte{e2ePCMUByte(clientSample)}, remotevoice.FrameSamples),
+		answered:       make(chan struct{}), bye: make(chan struct{}),
+		gotClientPattern: make(chan struct{}), done: make(chan struct{}),
+	}
+	endpoint.wg.Add(2)
+	go endpoint.readSIP()
+	go endpoint.readRTP()
+	return endpoint, nil
+}
+
+func (e *e2eSIPEndpoint) Invite() error {
+	sipPort := e.sip.LocalAddr().(*net.UDPAddr).Port
+	rtpPort := e.rtp.LocalAddr().(*net.UDPAddr).Port
+	invite := e2eBuildInvite(e.localIP, sipPort, rtpPort, e.callID, e.fromTag)
+	_, err := e.sip.WriteToUDP([]byte(invite), e.sipTarget)
+	return err
+}
+
+func (e *e2eSIPEndpoint) readSIP() {
+	defer e.wg.Done()
+	buffer := make([]byte, 64<<10)
+	for {
+		_ = e.sip.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		count, peer, err := e.sip.ReadFromUDP(buffer)
+		if err != nil {
+			if e.closed() {
+				return
+			}
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			return
+		}
+		message, err := e2eParseSIP(buffer[:count])
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(message.start, "SIP/2.0 200") &&
+			strings.HasSuffix(strings.ToUpper(message.header["cseq"]), " INVITE") {
+			remoteRTP, err := e2eParseSDPRTP(message.body)
+			if err != nil {
+				continue
+			}
+			e.mu.Lock()
+			e.toHeader = message.header["to"]
+			e.remoteRTP = remoteRTP
+			e.mu.Unlock()
+			_ = e.sendACK()
+			e.answeredOnce.Do(func() { close(e.answered) })
+			e.rtpStartOnce.Do(func() {
+				e.wg.Add(1)
+				go e.sendRTP()
+			})
+			continue
+		}
+		if strings.HasPrefix(strings.ToUpper(message.start), "BYE ") {
+			_ = e.sendSIPResponse(peer, message, http.StatusOK, "OK")
+			e.byeOnce.Do(func() { close(e.bye) })
+			continue
+		}
+		if strings.HasPrefix(strings.ToUpper(message.start), "OPTIONS ") {
+			_ = e.sendSIPResponse(peer, message, http.StatusOK, "OK")
+		}
+	}
+}
+
+func (e *e2eSIPEndpoint) sendACK() error {
+	e.mu.Lock()
+	toHeader := e.toHeader
+	e.mu.Unlock()
+	localPort := e.sip.LocalAddr().(*net.UDPAddr).Port
+	ack := fmt.Sprintf("ACK sip:s@127.0.0.1:25060 SIP/2.0\r\n"+
+		"Via: SIP/2.0/UDP %s:%d;branch=z9hG4bK-synthetic-e2e-ack;rport\r\n"+
+		"Max-Forwards: 70\r\nFrom: <sip:synthetic@%s>;tag=%s\r\n"+
+		"To: %s\r\nCall-ID: %s\r\nCSeq: 1 ACK\r\nContent-Length: 0\r\n\r\n",
+		e.localIP, localPort, e.localIP, e.fromTag, toHeader, e.callID)
+	_, err := e.sip.WriteToUDP([]byte(ack), e.sipTarget)
+	return err
+}
+
+func (e *e2eSIPEndpoint) sendSIPResponse(peer *net.UDPAddr, request e2eSIPMessage, status int, reason string) error {
+	response := fmt.Sprintf("SIP/2.0 %d %s\r\nVia: %s\r\nFrom: %s\r\nTo: %s\r\n"+
+		"Call-ID: %s\r\nCSeq: %s\r\nContent-Length: 0\r\n\r\n",
+		status, reason, request.header["via"], request.header["from"], request.header["to"],
+		request.header["call-id"], request.header["cseq"])
+	_, err := e.sip.WriteToUDP([]byte(response), peer)
+	return err
+}
+
+func (e *e2eSIPEndpoint) sendRTP() {
+	defer e.wg.Done()
+	ticker := time.NewTicker(remotevoice.FrameMillis * time.Millisecond)
+	defer ticker.Stop()
+	sequence := uint16(1000)
+	timestamp := uint32(160000)
+	for {
+		select {
+		case <-e.done:
+			return
+		case <-ticker.C:
+		}
+		e.mu.Lock()
+		remote := e.remoteRTP
+		e.mu.Unlock()
+		if remote == nil {
+			continue
+		}
+		packet := e2eBuildRTP(sequence, timestamp, 0x4556414e, e.gatewayPayload)
+		_, _ = e.rtp.WriteToUDP(packet, remote)
+		sequence++
+		timestamp += remotevoice.FrameSamples
+	}
+}
+
+func (e *e2eSIPEndpoint) readRTP() {
+	defer e.wg.Done()
+	buffer := make([]byte, 2048)
+	for {
+		_ = e.rtp.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		count, _, err := e.rtp.ReadFromUDP(buffer)
+		if err != nil {
+			if e.closed() {
+				return
+			}
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			return
+		}
+		payload, ok := e2eParseRTP(buffer[:count])
+		if ok && bytes.Equal(payload, e.clientPayload) {
+			e.clientOnce.Do(func() { close(e.gotClientPattern) })
+		}
+	}
+}
+
+func (e *e2eSIPEndpoint) closed() bool {
+	select {
+	case <-e.done:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *e2eSIPEndpoint) Close() {
+	e.closeOnce.Do(func() {
+		close(e.done)
+		_ = e.sip.Close()
+		_ = e.rtp.Close()
+		e.wg.Wait()
+	})
+}
+
+func e2eBuildInvite(localIP string, sipPort, rtpPort int, callID, fromTag string) string {
+	sdp := fmt.Sprintf("v=0\r\no=- 1 1 IN IP4 %s\r\ns=Public Voice E2E\r\n"+
+		"c=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP 0\r\n"+
+		"a=rtpmap:0 PCMU/8000\r\na=sendrecv\r\na=ptime:20\r\n", localIP, localIP, rtpPort)
+	return fmt.Sprintf("INVITE sip:s@127.0.0.1:25060 SIP/2.0\r\n"+
+		"Via: SIP/2.0/UDP %s:%d;branch=z9hG4bK-synthetic-e2e-invite;rport\r\n"+
+		"Max-Forwards: 70\r\nFrom: <sip:synthetic@%s>;tag=%s\r\n"+
+		"To: <sip:s@127.0.0.1>\r\nCall-ID: %s\r\nCSeq: 1 INVITE\r\n"+
+		"Contact: <sip:synthetic@%s:%d>\r\nSupported: replaces, timer\r\n"+
+		"Content-Type: application/sdp\r\nContent-Length: %d\r\n\r\n%s",
+		localIP, sipPort, localIP, fromTag, callID, localIP, sipPort, len(sdp), sdp)
+}
+
+func e2eParseSIP(data []byte) (e2eSIPMessage, error) {
+	if len(data) == 0 || len(data) > 64<<10 {
+		return e2eSIPMessage{}, errors.New("invalid SIP message size")
+	}
+	raw := string(data)
+	separator := "\r\n\r\n"
+	index := strings.Index(raw, separator)
+	if index < 0 {
+		separator = "\n\n"
+		index = strings.Index(raw, separator)
+	}
+	if index < 0 {
+		return e2eSIPMessage{}, errors.New("SIP header terminator missing")
+	}
+	head := strings.ReplaceAll(raw[:index], "\r\n", "\n")
+	body := raw[index+len(separator):]
+	lines := strings.Split(head, "\n")
+	if len(lines) < 2 || strings.TrimSpace(lines[0]) != lines[0] || lines[0] == "" {
+		return e2eSIPMessage{}, errors.New("invalid SIP start line")
+	}
+	message := e2eSIPMessage{start: lines[0], header: make(map[string]string), body: body}
+	for _, line := range lines[1:] {
+		name, value, ok := strings.Cut(line, ":")
+		name = strings.ToLower(strings.TrimSpace(name))
+		value = strings.TrimSpace(value)
+		if !ok || name == "" || value == "" {
+			return e2eSIPMessage{}, errors.New("invalid SIP header")
+		}
+		if _, duplicate := message.header[name]; !duplicate {
+			message.header[name] = value
+		}
+	}
+	return message, nil
+}
+
+func e2eParseSDPRTP(sdp string) (*net.UDPAddr, error) {
+	var host string
+	port := 0
+	pcmu := false
+	for _, raw := range strings.Split(strings.ReplaceAll(sdp, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "c=IN IP4 ") {
+			host = strings.TrimSpace(strings.TrimPrefix(line, "c=IN IP4 "))
+		}
+		if strings.HasPrefix(line, "m=audio ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 4 && fields[2] == "RTP/AVP" {
+				parsed, err := strconv.Atoi(fields[1])
+				if err == nil && parsed > 0 && parsed <= 65535 {
+					port = parsed
+				}
+				for _, payload := range fields[3:] {
+					pcmu = pcmu || payload == "0"
+				}
+			}
+		}
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() || port == 0 || !pcmu {
+		return nil, errors.New("SDP does not expose one loopback PCMU RTP endpoint")
+	}
+	return &net.UDPAddr{IP: ip, Port: port}, nil
+}
+
+func e2eBuildRTP(sequence uint16, timestamp, ssrc uint32, payload []byte) []byte {
+	packet := make([]byte, 12+len(payload))
+	packet[0] = 0x80
+	packet[1] = 0
+	binary.BigEndian.PutUint16(packet[2:4], sequence)
+	binary.BigEndian.PutUint32(packet[4:8], timestamp)
+	binary.BigEndian.PutUint32(packet[8:12], ssrc)
+	copy(packet[12:], payload)
+	return packet
+}
+
+func e2eParseRTP(packet []byte) ([]byte, bool) {
+	if len(packet) < 12 || packet[0]>>6 != 2 || packet[1]&0x7f != 0 {
+		return nil, false
+	}
+	headerLength := 12 + int(packet[0]&0x0f)*4
+	if headerLength > len(packet) {
+		return nil, false
+	}
+	if packet[0]&0x10 != 0 {
+		if headerLength+4 > len(packet) {
+			return nil, false
+		}
+		extensionWords := int(binary.BigEndian.Uint16(packet[headerLength+2 : headerLength+4]))
+		headerLength += 4 + extensionWords*4
+		if headerLength > len(packet) {
+			return nil, false
+		}
+	}
+	payloadEnd := len(packet)
+	if packet[0]&0x20 != 0 {
+		padding := int(packet[len(packet)-1])
+		if padding == 0 || padding > payloadEnd-headerLength {
+			return nil, false
+		}
+		payloadEnd -= padding
+	}
+	if payloadEnd-headerLength != remotevoice.FrameSamples {
+		return nil, false
+	}
+	return append([]byte(nil), packet[headerLength:payloadEnd]...), true
+}
+
+func e2ePCMUByte(sample int16) byte {
+	pcm := make([]int16, remotevoice.FrameSamples)
+	for index := range pcm {
+		pcm[index] = sample
+	}
+	encoded := remotevoice.EncodePCMU(pcm)
+	if len(encoded) != remotevoice.FrameSamples {
+		panic("PCMU encoder produced an invalid frame")
+	}
+	for _, value := range encoded[1:] {
+		if value != encoded[0] {
+			panic("constant PCM did not produce a constant PCMU frame")
+		}
+	}
+	return encoded[0]
+}

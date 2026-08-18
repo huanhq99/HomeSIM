@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:importantForAutofill="noExcludeDescendants">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/title"
+            android:textAppearance="?android:attr/textAppearanceLarge"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/scope_notice" />
+
+        <TextView
+            android:id="@+id/gateway"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp" />
+
+        <TextView
+            android:id="@+id/device_identity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp" />
+
+        <EditText
+            android:id="@+id/ticket_id"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:autofillHints=""
+            android:hint="@string/ticket_id_hint"
+            android:inputType="textVisiblePassword|textNoSuggestions"
+            android:maxLength="256"
+            android:saveEnabled="false"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/ticket_secret"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:hint="@string/ticket_secret_hint"
+            android:inputType="textPassword|textNoSuggestions"
+            android:maxLength="128"
+            android:saveEnabled="false"
+            android:singleLine="true" />
+
+        <Button
+            android:id="@+id/enroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/enroll" />
+
+        <Button
+            android:id="@+id/load_session"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/load_session" />
+
+        <EditText
+            android:id="@+id/cursor"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:hint="@string/cursor_hint"
+            android:inputType="textVisiblePassword|textNoSuggestions"
+            android:maxLength="256"
+            android:saveEnabled="false"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/limit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:hint="@string/limit_hint"
+            android:inputType="number"
+            android:maxLength="2"
+            android:saveEnabled="false"
+            android:singleLine="true"
+            android:text="@string/default_limit" />
+
+        <Button
+            android:id="@+id/sync_sms"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/sync_sms" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/sms_send_title"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/sms_phone"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:hint="@string/sms_phone_hint"
+            android:inputType="phone"
+            android:maxLength="256"
+            android:saveEnabled="false"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/sms_message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:gravity="top|start"
+            android:hint="@string/sms_message_hint"
+            android:inputType="textCapSentences|textMultiLine|textNoSuggestions"
+            android:maxLength="8192"
+            android:maxLines="8"
+            android:minLines="3"
+            android:saveEnabled="false" />
+
+        <Button
+            android:id="@+id/send_sms"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/send_sms" />
+
+        <TextView
+            android:id="@+id/sms_operation_guard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:saveEnabled="false"
+            android:text="@string/sms_guard_empty" />
+
+        <Button
+            android:id="@+id/check_sms_operation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/check_sms_operation" />
+
+        <Button
+            android:id="@+id/close_sms_operation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/close_sms_operation" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/idle"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/result"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fontFamily="monospace"
+            android:saveEnabled="false"
+            android:textIsSelectable="false" />
+    </LinearLayout>
+</ScrollView>

@@ -1,0 +1,6 @@
+[general]
+rtpstart = @@RTP_MIN@@
+rtpend = @@RTP_MAX@@
+strictrtp = yes
+probation = 4
+icesupport = no

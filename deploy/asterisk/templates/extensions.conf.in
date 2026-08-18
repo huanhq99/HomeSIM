@@ -1,0 +1,18 @@
+[general]
+static = yes
+writeprotect = yes
+clearglobalvars = yes
+
+[@@CONTEXT@@]
+; Only the exact IP-identified PJSIP endpoint enters this context. Do not log
+; caller ID or dialled digits here: those are private runtime data.
+exten => s,1,Goto(dj1-incoming,1)
+exten => _X!,1,Goto(dj1-incoming,1)
+exten => dj1-incoming,1,Set(DJONEHUB_POLICY_ID=@@POLICY_ID@@)
+ same => n,Set(GROUP(dj1_external_voice)=incoming)
+ same => n,GotoIf($[${GROUP_COUNT(incoming@dj1_external_voice)} > 1]?capacity)
+ same => n,Set(TIMEOUT(absolute)=@@MAX_CALL_SECONDS@@)
+ same => n,Stasis(@@APPLICATION@@,@@ARGUMENT@@)
+ same => n,Hangup()
+ same => n(capacity),Busy(1)
+ same => n,Hangup()

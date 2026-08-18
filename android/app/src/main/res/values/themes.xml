@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MacCellularGateway" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/gateway_background</item>
+        <item name="android:navigationBarColor">@color/gateway_background</item>
+        <item name="android:windowBackground">@null</item>
+    </style>
+</resources>

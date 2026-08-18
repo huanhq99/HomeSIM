@@ -1,0 +1,249 @@
+name: dji4g-public-edge
+
+services:
+  edge:
+    image: "${DJI4G_EDGE_IMAGE:?missing pinned edge image name@sha256}"
+    profiles:
+      - edge
+    pull_policy: never
+    restart: "no"
+    init: true
+    runtime: runc
+    ipc: private
+    cgroup: private
+    user: "${DJI4G_EDGE_UID:?missing generated uid}:${DJI4G_EDGE_GID:?missing generated gid}"
+    env_file:
+      - "${DJI4G_EDGE_ENV_FILE:?missing generated edge env file}"
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        - CMD
+        - /djonehub-edge-healthcheck
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=docker-default
+      - seccomp=builtin
+    pids_limit: 128
+    mem_limit: 256m
+    memswap_limit: 256m
+    shm_size: 64m
+    cpus: "1.0"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    volumes:
+      - type: bind
+        source: "${DJI4G_PUBLIC_EDGE_ROOT:?missing generated root}/config/gateway-public-key.pem"
+        target: /run/config/gateway-public-key.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${DJI4G_PUBLIC_EDGE_ROOT:?missing generated root}/config/access-allowed-emails"
+        target: /run/config/access-allowed-emails
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - public-edge-control
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  cloudflared:
+    image: "${DJI4G_CLOUDFLARED_IMAGE:?missing pinned cloudflared image name@sha256}"
+    profiles:
+      - edge
+    pull_policy: never
+    restart: "no"
+    init: true
+    runtime: runc
+    ipc: private
+    cgroup: private
+    user: "${DJI4G_EDGE_UID:?missing generated uid}:${DJI4G_EDGE_GID:?missing generated gid}"
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --metrics
+      - 127.0.0.1:2000
+      - run
+      - --token-file
+      - /run/secrets/cloudflare-tunnel-token
+    depends_on:
+      edge:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - cloudflared
+        - tunnel
+        - --metrics
+        - 127.0.0.1:2000
+        - ready
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 6
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=docker-default
+      - seccomp=builtin
+    pids_limit: 64
+    mem_limit: 128m
+    memswap_limit: 128m
+    shm_size: 64m
+    cpus: "0.5"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    volumes:
+      - type: bind
+        source: "${DJI4G_PUBLIC_EDGE_ROOT:?missing generated root}/secrets/cloudflare-tunnel.token"
+        target: /run/secrets/cloudflare-tunnel-token
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - public-edge-control
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  coturn:
+    image: "${DJI4G_COTURN_IMAGE:?missing pinned coturn image name@sha256}"
+    profiles:
+      - turn
+    pull_policy: never
+    restart: "no"
+    init: true
+    runtime: runc
+    ipc: private
+    cgroup: private
+    user: "${DJI4G_EDGE_UID:?missing generated uid}:${DJI4G_EDGE_GID:?missing generated gid}"
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+    ports:
+      - name: turn-tcp
+        target: 3478
+        published: "3478"
+        host_ip: 0.0.0.0
+        protocol: tcp
+      - name: turn-udp
+        target: 3478
+        published: "3478"
+        host_ip: 0.0.0.0
+        protocol: udp
+      - name: turn-tls
+        target: 5349
+        published: "443"
+        host_ip: 0.0.0.0
+        protocol: tcp
+      - name: turn-relay-49160-udp
+        target: 49160
+        published: "49160"
+        host_ip: 0.0.0.0
+        protocol: udp
+      - name: turn-relay-49161-udp
+        target: 49161
+        published: "49161"
+        host_ip: 0.0.0.0
+        protocol: udp
+      - name: turn-relay-49162-udp
+        target: 49162
+        published: "49162"
+        host_ip: 0.0.0.0
+        protocol: udp
+      - name: turn-relay-49163-udp
+        target: 49163
+        published: "49163"
+        host_ip: 0.0.0.0
+        protocol: udp
+      - name: turn-relay-49164-udp
+        target: 49164
+        published: "49164"
+        host_ip: 0.0.0.0
+        protocol: udp
+      - name: turn-relay-49165-udp
+        target: 49165
+        published: "49165"
+        host_ip: 0.0.0.0
+        protocol: udp
+      - name: turn-relay-49166-udp
+        target: 49166
+        published: "49166"
+        host_ip: 0.0.0.0
+        protocol: udp
+      - name: turn-relay-49167-udp
+        target: 49167
+        published: "49167"
+        host_ip: 0.0.0.0
+        protocol: udp
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=docker-default
+      - seccomp=builtin
+    pids_limit: 128
+    mem_limit: 256m
+    memswap_limit: 256m
+    shm_size: 64m
+    cpus: "1.0"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    volumes:
+      - type: bind
+        source: "${DJI4G_PUBLIC_EDGE_ROOT:?missing generated root}/config/turnserver.conf"
+        target: /etc/coturn/turnserver.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${DJI4G_PUBLIC_EDGE_ROOT:?missing generated root}/secrets/turn-tls-cert.pem"
+        target: /run/secrets/turn-tls-cert.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${DJI4G_PUBLIC_EDGE_ROOT:?missing generated root}/secrets/turn-tls-key.pem"
+        target: /run/secrets/turn-tls-key.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      public-edge-turn:
+        ipv4_address: 172.30.247.2
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  public-edge-control:
+    driver: bridge
+  public-edge-turn:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.247.0/28
+          gateway: 172.30.247.1

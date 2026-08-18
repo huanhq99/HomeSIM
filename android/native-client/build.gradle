@@ -1,0 +1,93 @@
+import groovy.json.JsonOutput
+
+plugins {
+    id "com.android.application"
+}
+
+def configuredGatewayOrigin = (gradle.startParameter.projectProperties
+        .get("nativeGatewayOrigin") ?: "").trim()
+
+abstract class ValidateNativeGatewayOrigin extends DefaultTask {
+    @Input
+    abstract Property<String> getGatewayOrigin()
+
+    @TaskAction
+    void validate() {
+        String value = gatewayOrigin.get()
+        if (value.isEmpty()) {
+            throw new GradleException(
+                    "Pass -PnativeGatewayOrigin=https://<host>.ts.net; private gateway hosts never belong in Git.")
+        }
+        URI uri
+        try {
+            uri = new URI(value)
+        } catch (URISyntaxException error) {
+            throw new GradleException("Native gateway origin is not a valid URI.", error)
+        }
+        String host = uri.host == null ? "" : uri.host.toLowerCase(Locale.ROOT)
+        boolean validHost = host.length() > ".ts.net".length() && host.endsWith(".ts.net") &&
+                host ==~ /[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.ts\.net/
+        String canonical = "https://" + host
+        if (uri.scheme != "https" || !validHost || uri.port != -1 || uri.userInfo != null ||
+                !(uri.rawPath == null || uri.rawPath.isEmpty()) || uri.rawQuery != null ||
+                uri.rawFragment != null || value != canonical) {
+            throw new GradleException(
+                    "Native gateway origin must be exactly https://<host>.ts.net on default port 443, with no trailing slash.")
+        }
+    }
+}
+
+def validateNativeGatewayOrigin = tasks.register(
+        "validateNativeGatewayOrigin", ValidateNativeGatewayOrigin) {
+    gatewayOrigin.set(configuredGatewayOrigin)
+}
+
+android {
+    namespace = "org.maccellular.gateway.nativeclient"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "io.maccellular.nativeclient"
+        minSdk = 27
+        targetSdk = 35
+        versionCode = 1
+        versionName = "0.1.0-trust-preview"
+        buildConfigField "String", "GATEWAY_ORIGIN", JsonOutput.toJson(configuredGatewayOrigin)
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    buildTypes {
+        debug {
+            debuggable = true
+        }
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        warningsAsErrors = true
+        disable += ["OldTargetApi"]
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(validateNativeGatewayOrigin)
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
+}

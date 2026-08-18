@@ -1,0 +1,17 @@
+[general]
+enabled = yes
+pretty = no
+allowed_origins =
+channelvars = MEDIA_WEBSOCKET_CONNECTION_ID,DJONEHUB_POLICY_ID
+
+[@@CONTROL_USER@@]
+type = user
+read_only = no
+password_format = crypt
+password = @@CONTROL_HASH@@
+
+[@@INSPECT_USER@@]
+type = user
+read_only = yes
+password_format = crypt
+password = @@INSPECT_HASH@@

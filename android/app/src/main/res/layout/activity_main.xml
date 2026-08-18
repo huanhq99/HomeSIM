@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/gateway_background"
+    android:importantForAutofill="noExcludeDescendants"
+    android:importantForContentCapture="noExcludeDescendants"
+    tools:targetApi="r"
+    tools:ignore="MergeRootFrame,Overdraw">
+
+    <FrameLayout
+        android:id="@+id/web_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:id="@+id/privacy_shield"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/gateway_background"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp">
+
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_gateway" />
+
+        <TextView
+            android:id="@+id/privacy_message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:gravity="center"
+            android:text="@string/connecting"
+            android:textColor="@color/gateway_foreground"
+            android:textSize="17sp" />
+
+        <Button
+            android:id="@+id/retry_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/retry"
+            android:visibility="gone" />
+    </LinearLayout>
+
+</FrameLayout>

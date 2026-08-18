@@ -1,0 +1,242 @@
+#!/bin/sh
+set -eu
+umask 077
+
+SOURCE=$0
+while [ -L "${SOURCE}" ]; do
+  SOURCE_DIR=$(CDPATH= cd -P -- "$(dirname -- "${SOURCE}")" && pwd)
+  SOURCE=$(readlink "${SOURCE}")
+  case "${SOURCE}" in
+    /*) ;;
+    *) SOURCE="${SOURCE_DIR}/${SOURCE}" ;;
+  esac
+done
+PACKAGE_DIR=$(CDPATH= cd -P -- "$(dirname -- "${SOURCE}")" && pwd)
+INSTALL_DIR=${DJONEHUB_INSTALL_DIR:-/usr/local/libexec/maccellular}
+COMMAND_PATH=${DJONEHUB_COMMAND_PATH:-/usr/local/bin/maccellular}
+INSTALL_PARENT=$(dirname -- "${INSTALL_DIR}")
+COMMAND_PARENT=$(dirname -- "${COMMAND_PATH}")
+TOKEN=$$
+INSTALL_STAGE="${INSTALL_PARENT}/.maccellular.installing.${TOKEN}"
+INSTALL_BACKUP="${INSTALL_PARENT}/.maccellular.previous.${TOKEN}"
+COMMAND_STAGE="${COMMAND_PARENT}/.maccellular.command.installing.${TOKEN}"
+COMMAND_BACKUP="${COMMAND_PARENT}/.maccellular.command.previous.${TOKEN}"
+
+SUCCESS=0
+TRANSACTION_STARTED=0
+INSTALL_BACKED_UP=0
+COMMAND_BACKED_UP=0
+INSTALL_INSTALLED=0
+COMMAND_INSTALLED=0
+
+run_privileged() {
+  if [ "${DJONEHUB_INSTALL_NO_SUDO:-0}" = "1" ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+path_exists() {
+  [ -e "$1" ] || [ -L "$1" ]
+}
+
+remove_install_tree() {
+  case "$1" in
+    "${INSTALL_DIR}"|"${INSTALL_STAGE}"|"${INSTALL_BACKUP}")
+      run_privileged /bin/rm -rf -- "$1"
+      ;;
+    *)
+      echo "拒绝删除未验证路径：$1" >&2
+      return 70
+      ;;
+  esac
+}
+
+remove_command_entry() {
+  case "$1" in
+    "${COMMAND_PATH}"|"${COMMAND_STAGE}"|"${COMMAND_BACKUP}")
+      run_privileged /bin/rm -f -- "$1"
+      ;;
+    *)
+      echo "拒绝删除未验证路径：$1" >&2
+      return 70
+      ;;
+  esac
+}
+
+cleanup() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  set +e
+
+  if [ "${TRANSACTION_STARTED}" -eq 0 ]; then
+    exit "${status}"
+  fi
+
+  if [ "${SUCCESS}" -eq 1 ]; then
+    remove_install_tree "${INSTALL_STAGE}" >/dev/null 2>&1
+    remove_install_tree "${INSTALL_BACKUP}" >/dev/null 2>&1
+    remove_command_entry "${COMMAND_STAGE}" >/dev/null 2>&1
+    remove_command_entry "${COMMAND_BACKUP}" >/dev/null 2>&1
+  else
+    if [ "${COMMAND_INSTALLED}" -eq 1 ]; then
+      remove_command_entry "${COMMAND_PATH}" >/dev/null 2>&1
+    fi
+    if [ "${COMMAND_BACKED_UP}" -eq 1 ] && path_exists "${COMMAND_BACKUP}"; then
+      run_privileged /bin/mv -- "${COMMAND_BACKUP}" "${COMMAND_PATH}" >/dev/null 2>&1 || \
+        echo "警告：未能恢复原命令入口 ${COMMAND_PATH}" >&2
+    fi
+
+    if [ "${INSTALL_INSTALLED}" -eq 1 ]; then
+      remove_install_tree "${INSTALL_DIR}" >/dev/null 2>&1
+    fi
+    if [ "${INSTALL_BACKED_UP}" -eq 1 ] && path_exists "${INSTALL_BACKUP}"; then
+      run_privileged /bin/mv -- "${INSTALL_BACKUP}" "${INSTALL_DIR}" >/dev/null 2>&1 || \
+        echo "警告：未能恢复原安装目录 ${INSTALL_DIR}" >&2
+    fi
+
+    remove_install_tree "${INSTALL_STAGE}" >/dev/null 2>&1
+    remove_command_entry "${COMMAND_STAGE}" >/dev/null 2>&1
+    echo "安装失败；已尝试恢复原版本。" >&2
+  fi
+
+  exit "${status}"
+}
+
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+case "${INSTALL_DIR}" in
+  /*) ;;
+  *) echo "安装目录必须是绝对路径：${INSTALL_DIR}" >&2; exit 64 ;;
+esac
+case "${COMMAND_PATH}" in
+  /*) ;;
+  *) echo "命令路径必须是绝对路径：${COMMAND_PATH}" >&2; exit 64 ;;
+esac
+case "${INSTALL_DIR}" in
+  /|/usr|/usr/local|/usr/local/libexec)
+    echo "拒绝使用过宽的安装目录：${INSTALL_DIR}" >&2
+    exit 64
+    ;;
+esac
+case "${COMMAND_PATH}" in
+  /|/usr|/usr/local|/usr/local/bin)
+    echo "拒绝使用过宽的命令路径：${COMMAND_PATH}" >&2
+    exit 64
+    ;;
+esac
+if [ -d "${COMMAND_PATH}" ] && [ ! -L "${COMMAND_PATH}" ]; then
+  echo "命令路径已被目录占用：${COMMAND_PATH}" >&2
+  exit 73
+fi
+
+case "$(uname -m)" in
+  arm64|x86_64) ;;
+  *)
+    echo "当前安装包仅支持 Apple Silicon（M 系列）或 Intel（x86_64）Mac。" >&2
+    exit 1
+    ;;
+esac
+
+echo "MacCellular 将安装到 ${INSTALL_DIR}"
+echo "macOS 可能要求输入当前用户的管理员密码。"
+
+run_privileged /bin/mkdir -p "${INSTALL_PARENT}" "${COMMAND_PARENT}"
+remove_install_tree "${INSTALL_STAGE}" >/dev/null 2>&1 || true
+remove_install_tree "${INSTALL_BACKUP}" >/dev/null 2>&1 || true
+remove_command_entry "${COMMAND_STAGE}" >/dev/null 2>&1 || true
+remove_command_entry "${COMMAND_BACKUP}" >/dev/null 2>&1 || true
+run_privileged /bin/mkdir -m 700 "${INSTALL_STAGE}"
+TRANSACTION_STARTED=1
+run_privileged /usr/bin/ditto --norsrc --noextattr --noqtn --noacl "${PACKAGE_DIR}" "${INSTALL_STAGE}"
+
+if run_privileged /usr/bin/find "${INSTALL_STAGE}" -type l -print -quit | /usr/bin/grep -q .; then
+  echo "安装失败：发行包包含符号链接；为避免管理员安装越界，已拒绝安装。" >&2
+  exit 65
+fi
+
+for required in \
+  djonehub \
+  bin/djonehub-macos \
+  lib/libusb-1.0.0.dylib \
+  install \
+  VERSION \
+  LICENSE \
+  合法与负责任使用.md \
+  数据与隐私说明.md \
+  THIRD_PARTY_NOTICES.md \
+  licenses/MaVo-LICENSE \
+  licenses/libusb-COPYING \
+  third_party/euicc-go/LICENSE \
+  third_party/euicc-go/bertlv/LICENSE \
+  third_party/uicc-go/LICENSE \
+  third_party/quectel-qmi-go/LICENSE \
+  third_party/strftime/LICENSE \
+  third_party/pkg-errors/LICENSE \
+  third_party/x-sys/LICENSE \
+  third_party/x-text/LICENSE \
+  third_party/multierr/LICENSE.txt
+do
+  if ! run_privileged /bin/test -f "${INSTALL_STAGE}/${required}"; then
+    echo "安装失败：发行包缺少 ${required}，请重新下载并完整解压。" >&2
+    exit 65
+  fi
+done
+
+PACKAGE_VERSION=$(run_privileged /bin/cat "${INSTALL_STAGE}/VERSION")
+case "${PACKAGE_VERSION}" in
+  v[0-9]*.[0-9]*.[0-9]*) ;;
+  *)
+    echo "安装失败：发行包 VERSION 无效：${PACKAGE_VERSION}" >&2
+    exit 65
+    ;;
+esac
+
+if run_privileged /usr/bin/find "${INSTALL_STAGE}" \
+  \( -iname '*.ko' -o -iname '*.armv7' -o -name ModuleVoice \) -print | /usr/bin/grep -q .; then
+  echo "安装失败：发行包包含不应分发的模块侧语音运行时。" >&2
+  exit 65
+fi
+
+run_privileged /usr/bin/codesign --verify --strict "${INSTALL_STAGE}/bin/djonehub-macos"
+run_privileged /usr/bin/codesign --verify --strict "${INSTALL_STAGE}/lib/libusb-1.0.0.dylib"
+run_privileged /usr/bin/find "${INSTALL_STAGE}" -type d -exec /bin/chmod 755 {} +
+run_privileged /bin/chmod 755 \
+  "${INSTALL_STAGE}/djonehub" \
+  "${INSTALL_STAGE}/install" \
+  "${INSTALL_STAGE}/bin/djonehub-macos" \
+  "${INSTALL_STAGE}/lib/libusb-1.0.0.dylib"
+if [ "${DJONEHUB_INSTALL_NO_SUDO:-0}" != "1" ]; then
+  run_privileged /usr/sbin/chown -R root:wheel "${INSTALL_STAGE}"
+fi
+
+run_privileged /bin/ln -s "${INSTALL_DIR}/djonehub" "${COMMAND_STAGE}"
+
+# Only stop the old CLI service after the replacement has been fully staged and verified.
+if [ -x "${COMMAND_PATH}" ]; then
+  "${COMMAND_PATH}" stop >/dev/null 2>&1 || true
+fi
+
+if path_exists "${INSTALL_DIR}"; then
+  run_privileged /bin/mv -- "${INSTALL_DIR}" "${INSTALL_BACKUP}"
+  INSTALL_BACKED_UP=1
+fi
+if path_exists "${COMMAND_PATH}"; then
+  run_privileged /bin/mv -- "${COMMAND_PATH}" "${COMMAND_BACKUP}"
+  COMMAND_BACKED_UP=1
+fi
+
+run_privileged /bin/mv -- "${INSTALL_STAGE}" "${INSTALL_DIR}"
+INSTALL_INSTALLED=1
+run_privileged /bin/mv -- "${COMMAND_STAGE}" "${COMMAND_PATH}"
+COMMAND_INSTALLED=1
+SUCCESS=1
+
+echo
+echo "MacCellular ${PACKAGE_VERSION} 安装完成。现在可以在任意目录执行："
+echo "  maccellular start"
+echo
+echo "停止程序："
+echo "  maccellular stop"

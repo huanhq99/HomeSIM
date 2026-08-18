@@ -1,0 +1,14 @@
+# Keep GitHub language statistics focused on DJOneHub's own source.
+third_party/** linguist-vendored
+
+# Documentation and bundled screenshots are not application source.
+docs/** linguist-documentation
+*.md linguist-documentation
+
+# Keep Windows deployment entry points native when checked out or archived.
+windows/*.cmd text eol=crlf
+windows/*.ps1 text eol=crlf
+
+# mdns/v2 v2.1.0 ships one intentional trailing space in its copyright line.
+# Preserve the upstream license byte-for-byte without weakening source checks.
+licenses/Pion-mdns-LICENSE whitespace=-blank-at-eol

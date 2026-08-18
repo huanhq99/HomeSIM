@@ -1,0 +1,135 @@
+import groovy.json.JsonOutput
+
+plugins {
+    id "com.android.application"
+}
+
+def configuredGatewayUrl = providers.gradleProperty("gatewayUrl")
+        .orElse(providers.environmentVariable("MACCELLULAR_GATEWAY_URL"))
+        .getOrElse("")
+        .trim()
+
+// Only a project property passed on this Gradle invocation (-P) may opt in.
+// Persistent gradle.properties, ORG_GRADLE_PROJECT_* and system properties must
+// not silently turn ordinary builds into microphone-capable test packages.
+def foregroundCallsOptIn = (gradle.startParameter.projectProperties
+        .get("enableForegroundCalls") ?: "false").trim()
+
+abstract class ValidateGatewayUrl extends DefaultTask {
+    @Input
+    abstract Property<String> getGatewayUrl()
+
+    @TaskAction
+    void validate() {
+        String value = gatewayUrl.get()
+        if (value.isEmpty()) {
+            throw new GradleException("Set MACCELLULAR_GATEWAY_URL or -PgatewayUrl; private gateway hosts never belong in Git.")
+        }
+        URI uri
+        try {
+            uri = new URI(value)
+        } catch (URISyntaxException error) {
+            throw new GradleException("Gateway URL is not a valid URI.", error)
+        }
+        String host = uri.host == null ? "" : uri.host.toLowerCase(Locale.ROOT)
+        boolean validHost = host.length() > ".ts.net".length() && host.endsWith(".ts.net") &&
+                host ==~ /[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.ts\.net/
+        if (uri.scheme != "https" || !validHost || uri.port != -1 || uri.userInfo != null ||
+                uri.rawPath != "/remote/" || uri.rawQuery != null || uri.rawFragment != null) {
+            throw new GradleException("Gateway URL must be the exact https://<host>.ts.net/remote/ root on default port 443.")
+        }
+    }
+}
+
+abstract class ValidateForegroundCalls extends DefaultTask {
+    @Input
+    abstract Property<String> getOptIn()
+
+    @TaskAction
+    void validate() {
+        if (optIn.get() != "true") {
+            throw new GradleException(
+                    "callForeground is an explicit test build. Pass -PenableForegroundCalls=true to build it.")
+        }
+    }
+}
+
+def validateGatewayUrl = tasks.register("validateGatewayUrl", ValidateGatewayUrl) {
+    gatewayUrl.set(configuredGatewayUrl)
+}
+
+def validateForegroundCalls = tasks.register("validateForegroundCalls", ValidateForegroundCalls) {
+    optIn.set(foregroundCallsOptIn)
+}
+
+android {
+    namespace = "org.maccellular.gateway"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "io.maccellular.remote"
+        minSdk = 27
+        targetSdk = 35
+        versionCode = 1
+        versionName = "0.1.0"
+        buildConfigField "String", "GATEWAY_URL", JsonOutput.toJson(configuredGatewayUrl)
+        buildConfigField "boolean", "FOREGROUND_CALLS", "false"
+    }
+
+    flavorDimensions += "capability"
+    productFlavors {
+        viewer {
+            dimension = "capability"
+        }
+        callForeground {
+            dimension = "capability"
+            applicationIdSuffix = ".calltest"
+            versionNameSuffix = "-calltest"
+            buildConfigField "boolean", "FOREGROUND_CALLS", "true"
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    buildTypes {
+        debug {
+            debuggable = true
+        }
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        warningsAsErrors = true
+        disable += ["OldTargetApi"]
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(validateGatewayUrl)
+}
+
+tasks.matching { task -> task.name.startsWith("preCallForeground") && task.name.endsWith("Build") }
+        .configureEach {
+            dependsOn(validateForegroundCalls)
+        }
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+}

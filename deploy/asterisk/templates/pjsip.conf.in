@@ -1,0 +1,38 @@
+[global]
+type = global
+endpoint_identifier_order = ip
+default_from_user = anonymous
+
+[transport-volte-udp]
+type = transport
+protocol = udp
+bind = 0.0.0.0:5060
+allow_reload = no
+external_signaling_address = @@SIP_BIND_IP@@
+external_signaling_port = @@SIP_PORT@@
+external_media_address = @@SIP_BIND_IP@@
+local_net = @@PBX_CONTAINER_SUBNET@@
+
+[@@ENDPOINT@@]
+type = endpoint
+transport = transport-volte-udp
+context = @@CONTEXT@@
+identify_by = ip
+disallow = all
+allow = ulaw
+direct_media = no
+rtp_symmetric = yes
+force_rport = yes
+rewrite_contact = yes
+allow_subscribe = no
+allow_transfer = no
+trust_id_inbound = no
+trust_connected_line = no
+send_connected_line = no
+send_pai = no
+send_rpid = no
+
+[@@ENDPOINT@@-identify]
+type = identify
+endpoint = @@ENDPOINT@@
+match = @@GATEWAY_IP@@

@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DJOneHub for macOS</title>
+  <script>
+    try {
+      const theme = localStorage.getItem("djonehub-theme") || localStorage.getItem("vohive-theme");
+      if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+    } catch (_) {}
+  </script>
+  <link rel="stylesheet" href="/style.css?v=20260806-system-ui">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-block">
+      <div class="brand-line"><span class="brand-mark" aria-hidden="true"></span><span class="eyebrow">DJI 4G MODULE</span></div>
+      <h1>DJOneHub <span>macOS</span></h1>
+      <p id="device-summary">正在连接大疆 4G 模块</p>
+    </div>
+    <div class="header-actions">
+      <div class="theme-switch" role="group" aria-label="网页外观">
+        <button class="theme-option" type="button" data-theme-option="light" aria-pressed="false" title="浅色外观">浅色</button>
+        <button class="theme-option" type="button" data-theme-option="dark" aria-pressed="false" title="深色外观">深色</button>
+        <button class="theme-option" type="button" data-theme-option="auto" aria-pressed="true" title="跟随系统">自动</button>
+      </div>
+      <div class="network-policy-control">
+        <span class="network-policy-copy"><strong>4G</strong></span>
+        <button id="cellular-policy-toggle" class="network-policy-toggle" type="button" role="switch" aria-checked="true" aria-label="4G" title="关闭后强制禁止 Mac 使用 4G；短信和来电监控不受影响">
+          <span class="switch-thumb" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="network-policy-control gps-policy-control">
+        <span class="network-policy-copy"><strong>GPS</strong></span>
+        <button id="gps-header-toggle" class="network-policy-toggle" type="button" role="switch" aria-checked="false" aria-label="GPS 定位" title="默认关闭；开启后仅在本机读取定位信息">
+          <span class="switch-thumb" aria-hidden="true"></span>
+        </button>
+      </div>
+      <button id="refresh" class="compact icon-button" title="刷新状态" aria-label="刷新状态">↻</button>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="功能导航">
+      <nav class="sidebar-nav">
+        <button class="sidebar-item active" type="button" data-view="overview" title="模块状态概览">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM12 12l3-3"/></svg>
+          <span>概览</span>
+        </button>
+        <button class="sidebar-item" type="button" data-view="calls" title="接听、拨号与通话记录">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>
+          <span>通话</span>
+        </button>
+        <button class="sidebar-item" type="button" data-view="sms" title="短信收件箱与会话">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z"/></svg>
+          <span>短信</span>
+        </button>
+        <button class="sidebar-item" type="button" data-view="esim" title="eSIM 卡片管理">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+          <span>eSIM/卡片</span>
+        </button>
+        <button class="sidebar-item" type="button" data-view="network" title="4G USB 网络诊断">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M7 7a7 7 0 0 1 10 0M4.5 4.5a11 11 0 0 1 15 0M9.5 9.5a3.5 3.5 0 0 1 5 0"/></svg>
+          <span>网络</span>
+        </button>
+        <button class="sidebar-item" type="button" data-view="gps" title="GNSS 定位">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-5.2-6-10a6 6 0 1 1 12 0c0 4.8-6 10-6 10z"/><circle cx="12" cy="11" r="2"/></svg>
+          <span>定位</span>
+        </button>
+        <button class="sidebar-item" type="button" data-view="at" title="AT 指令调试">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7l5 5-5 5M11 17h9"/></svg>
+          <span>AT 调试</span>
+        </button>
+      </nav>
+    </aside>
+
+    <main class="content">
+      <section id="overview" class="view active" aria-label="模块状态">
+        <div class="view-heading">
+          <div><h2>概览</h2><p>模块实时状态与本次流量</p></div>
+        </div>
+        <section class="overview" aria-label="设备状态">
+          <div class="status-grid">
+            <div><span>运营商</span><strong id="operator">--</strong></div>
+            <div><span>信号</span><strong id="signal">--</strong></div>
+            <div><span>网络</span><strong id="network-mode">--</strong></div>
+            <div><span>SIM</span><strong id="sim">--</strong></div>
+            <div><span>运行策略</span><strong id="work-mode">--</strong></div>
+            <div><span>当前下载</span><strong id="traffic-rx-rate">--</strong></div>
+            <div><span>当前上传</span><strong id="traffic-tx-rate">--</strong></div>
+            <div><span>本次下载流量</span><strong id="traffic-session-rx">--</strong></div>
+            <div><span>本次上传流量</span><strong id="traffic-session-tx">--</strong></div>
+            <div><span>本次总流量</span><strong id="traffic-session-total">--</strong></div>
+          </div>
+        </section>
+        <section id="hardware-details" class="hardware-details" hidden></section>
+        <p id="workmode-status" class="inline-status" hidden></p>
+      </section>
+
+      <section id="calls" class="view" aria-live="polite">
+        <div class="view-heading">
+          <div><h2>通话</h2><p>接听、拨打与通话记录</p></div>
+          <small id="call-monitor-status">正在连接模块</small>
+        </div>
+        <div id="active-call" class="active-call" hidden>
+          <div>
+            <span id="active-call-label">正在来电</span>
+            <strong id="active-call-number">未知号码</strong>
+            <small id="active-call-time"></small>
+          </div>
+          <div class="call-actions">
+            <button id="answer-call" class="primary" type="button" hidden>接听</button>
+            <button id="hangup-call" class="danger" type="button" hidden>挂断</button>
+            <button id="reject-call" class="danger" type="button" hidden>拒接</button>
+          </div>
+        </div>
+        <div class="dial-panel">
+          <form id="dial-form" class="dial-form">
+            <input id="dial-number" type="tel" placeholder="输入或点击下方键盘拨号" autocomplete="tel" inputmode="tel">
+            <button type="submit">呼叫</button>
+          </form>
+          <div id="dial-pad" class="dial-pad" aria-label="拨号键盘">
+            <button type="button" class="dial-key" data-key="1">1</button>
+            <button type="button" class="dial-key" data-key="2">2</button>
+            <button type="button" class="dial-key" data-key="3">3</button>
+            <button type="button" class="dial-key" data-key="4">4</button>
+            <button type="button" class="dial-key" data-key="5">5</button>
+            <button type="button" class="dial-key" data-key="6">6</button>
+            <button type="button" class="dial-key" data-key="7">7</button>
+            <button type="button" class="dial-key" data-key="8">8</button>
+            <button type="button" class="dial-key" data-key="9">9</button>
+            <button type="button" class="dial-key" data-key="*">*</button>
+            <button type="button" class="dial-key" data-key="0">0</button>
+            <button type="button" class="dial-key" data-key="#">#</button>
+            <button type="button" class="dial-key dial-backspace" data-action="backspace" title="删除一位">⌫</button>
+            <button type="button" class="dial-key dial-call" data-action="call" title="拨打">📞</button>
+            <button type="button" class="dial-key dial-clear" data-action="clear" title="清空">×</button>
+          </div>
+        </div>
+        <div class="audio-row">
+          <span id="call-audio-status">通话音频：未运行</span>
+          <button id="call-audio-toggle" class="secondary" type="button">开启</button>
+          <button id="call-audio-mute" class="secondary" type="button" disabled>静音</button>
+          <small id="call-audio-levels"></small>
+        </div>
+        <details class="call-history-panel">
+          <summary><span>最近通话记录</span><small id="call-history-count">0 条</small></summary>
+          <div id="call-history" class="list empty">暂无记录</div>
+        </details>
+      </section>
+
+      <section id="sms" class="view">
+        <div class="view-heading">
+          <div><h2>短信</h2><p>自动轮询当前 SIM 与模块短信存储，按会话整理</p></div>
+          <div class="heading-actions">
+            <button id="clear-module-sms" class="secondary danger" type="button">清空全部短信</button>
+            <button id="refresh-sms" class="secondary" type="button">读取短信</button>
+          </div>
+        </div>
+        <form id="send-form" class="toolbar new-sms-form">
+          <input id="phone" type="tel" placeholder="接收号码" autocomplete="tel" required>
+          <input id="message" type="text" placeholder="短信内容" maxlength="1000" required>
+          <button type="submit">发送</button>
+        </form>
+        <div class="conversation-layout">
+          <div class="conversation-sidebar">
+            <p id="sms-status" class="inline-status">尚未读取短信</p>
+            <div id="sms-conversations" class="conversation-list empty">暂无短信</div>
+          </div>
+          <div id="sms-thread" class="conversation-thread">
+            <div class="thread-empty">选择左侧会话查看详情，或在上方发送新短信。</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="gps" class="view">
+        <div class="view-heading">
+          <div><h2>定位</h2><p>默认关闭，仅在本机显示坐标；定位期间每 15 秒刷新一次</p></div>
+          <div class="heading-actions">
+            <button id="gps-refresh" class="secondary" type="button">立即刷新</button>
+            <button id="gps-toggle" type="button">启动定位</button>
+          </div>
+        </div>
+        <p id="gps-status" class="inline-status">定位服务未启动。</p>
+        <div id="gps-result" class="diagnostic-grid" hidden></div>
+        <p class="inline-status">室内可能无法获得定位。停止定位后，模块将不再持续搜索卫星。</p>
+      </section>
+
+      <section id="esim" class="view">
+        <div class="view-heading">
+          <div><h2>eSIM / 卡片</h2><p>管理卡内 Profile，并核对模块实际接管状态</p></div>
+          <button id="refresh-esim" class="secondary">刷新</button>
+        </div>
+        <p id="esim-status" class="inline-status">仅在 SIM 卡槽中插入 eUICC/eSIM 卡片时使用；普通实体 SIM 可以忽略。</p>
+        <details id="esim-download-section" class="fold-panel esim-download">
+          <summary><span>下载新 Profile</span><small>SM-DP+ 激活信息</small></summary>
+          <form id="esim-download-form" class="esim-download-grid">
+            <input id="esim-smdp" placeholder="SM-DP+ 地址" required>
+            <input id="esim-matching-id" placeholder="Matching ID（可选）">
+            <input id="esim-confirmation-code" placeholder="确认码（可选）">
+            <input id="esim-imei" inputmode="numeric" maxlength="15" placeholder="模块 IMEI（必填）" required>
+            <input id="esim-aid" placeholder="目标 eUICC AID（可选）">
+            <button type="submit">开始下载</button>
+          </form>
+          <p id="esim-download-status" class="inline-status">填写运营商提供的激活信息后才会执行下载。</p>
+        </details>
+
+        <details id="esim-profile-panel" class="profile-panel" open>
+          <summary class="profile-panel-heading"><span class="profile-panel-title"><span class="section-kicker">INSTALLED PROFILES</span><strong>已安装的 Profile</strong></span><small>启用、改名或删除卡内 Profile。</small></summary>
+          <div class="profile-panel-content">
+          <details class="fold-panel">
+            <summary><span>卡片概览</span><small>卡类型、固件、EID</small></summary>
+            <div id="esim-chip" class="diagnostic-grid" hidden></div>
+          </details>
+          <details id="esim-runtime-section" class="fold-panel" hidden>
+            <summary><span>当前 Profile 运行状态</span><small>自动刷新</small></summary>
+            <div id="esim-runtime" class="diagnostic-grid"></div>
+          </details>
+          <details id="esim-phonebook-section" class="fold-panel" hidden>
+            <summary><span>卡片通讯录兼容性</span><small>只读检测</small></summary>
+            <div class="phonebook-probe">
+              <p id="esim-phonebook-status" class="inline-status">检测当前 Profile 是否支持卡内通讯录；不会写入联系人。</p>
+              <button id="probe-esim-phonebook" class="secondary compact" type="button">检测当前卡片</button>
+              <div id="esim-phonebook-result" class="phonebook-result" hidden></div>
+            </div>
+          </details>
+          <div id="esim-list" class="list empty">尚未读取 eUICC/eSIM 卡片</div>
+          </div>
+        </details>
+      </section>
+
+      <section id="network" class="view">
+        <div class="view-heading">
+          <div><h2>网络</h2><p>检查蜂窝注册、USB 网卡与默认出口</p></div>
+          <button id="refresh-network" class="secondary" type="button">刷新</button>
+        </div>
+        <p id="network-status" class="inline-status">尚未读取网络状态</p>
+        <div id="network-grid" class="diagnostic-grid"></div>
+        <h2 class="subheading">连通性检测</h2>
+        <div class="control-panel">
+          <button id="check-4g-route" class="secondary" type="button">检测 4G 出口</button>
+          <button id="check-proxy-route" class="secondary" type="button">检测代理</button>
+        </div>
+        <div id="network-checks" class="list empty">尚未检测</div>
+        <h2 class="subheading">网络策略</h2>
+        <p class="inline-status">模块固定保持 usbnet=1，短信、来电监控和 4G 网卡同时在线。macOS 优先使用 Wi‑Fi，Wi‑Fi 不可用时自动使用 4G，不再切换模块模式或重启模块。</p>
+        <h2 class="subheading">macOS 网络接口</h2>
+        <div id="network-interfaces" class="list empty">尚未读取接口</div>
+      </section>
+
+      <section id="at" class="view">
+        <div class="view-heading">
+          <div><h2>AT 调试</h2><p>直接向模块发送 AT 指令</p></div>
+        </div>
+        <form id="at-form" class="toolbar">
+          <input id="at-command" type="text" value="AT+CSQ" spellcheck="false" required>
+          <button type="submit">执行</button>
+        </form>
+        <pre id="at-output">等待命令</pre>
+      </section>
+    </main>
+  </div>
+
+  <div id="app-modal" class="modal-backdrop" hidden>
+    <form id="modal-form" class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-heading">
+        <h2 id="modal-title">确认操作</h2>
+        <button id="modal-close" class="secondary modal-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <p id="modal-message" class="modal-message" hidden></p>
+      <div id="modal-fields" class="modal-fields"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel" class="secondary" type="button">取消</button>
+        <button id="modal-confirm" type="submit">确定</button>
+      </div>
+    </form>
+  </div>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <script src="/app.js?v=20260806-system-ui"></script>
+</body>
+</html>
