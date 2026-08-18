@@ -23,7 +23,9 @@ MacCellular 面向希望继续使用实体 SIM、但不想随身携带第二台�
 > 不同，请先阅读下面的“部署前必须准备”。
 
 <p align="center">
-  <img src="docs/images/maccellular-pwa-mobile.png" width="390" alt="MacCellular 手机端主页，使用虚构线路和空白通信数据">
+  <img src="docs/images/maccellular-pwa-mobile.png" width="500" alt="MacCellular 手机端主页，使用虚构线路和空白通信数据">
+  <br>
+  <sub>手机端首页示例：虚构线路、空白通信数据，演示图中未接入蜂窝模块。</sub>
 </p>
 
 ## 它解决什么问题
