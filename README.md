@@ -139,13 +139,13 @@ flowchart TD
 ```
 
 1. 在 Mac 上连接受支持的 4G 模块并确认 SIM 已注册 VoLTE；
-2. 下载 `MacCellular-macOS-arm64-v1.0.0.dmg`；
+2. 从本仓库 [Releases](../../releases) 下载当前 RC 的 macOS arm64 DMG；
 3. 双击“安装 MacCellular.command”；
 4. 需要手机访问时，双击“配置手机访问.command”，选择“短信”或“电话与短信”；
 5. 按向导填入自己的 Cloudflare Access、Tunnel 和 TURN 信息；
 6. 在手机 Safari/Chrome 打开自己的域名，并选择“添加到主屏幕”。
 
-当前私人仓库已经可以构建上述 Release Candidate，但尚未上传安装包。源码用户可以看
+当前公开的是 Release Candidate，不是 `v1.0.0` 正式版。源码用户先阅读
 [安装与首次配置](docs/GETTING_STARTED.md)。仓库只提供示例域名和参数，维护者实际
 使用的域名、服务器、账户和部署配置不属于公开项目。
 
@@ -219,8 +219,8 @@ QDC507 音频路径参考了 MaVo、Celldock 等公开项目及同类实现提�
 - 当前公开 `1.0.0-rc.4` 测试候选；`v1.0.0` 正式版需完成剩余真机验收后另行发布；
 - 面向用户的版本摘要见 [MacCellular 1.0 发行说明](docs/RELEASE_NOTES_1.0.md)；
 - [1.0 发布检查表](docs/RELEASE_CHECKLIST.md) 全部通过后，才可正式发布；
-- 研发过程和旧判断保留在 [更新记录](CHANGELOG.md) 与 `docs/history/`，不再混入
-  新用户的安装主路径。
+- 面向用户的变化保留在 [更新记录](CHANGELOG.md)；私人研发记录、旧部署判断和真实
+  运行证据不进入公开仓库。
 
 ## 参与开发
 
