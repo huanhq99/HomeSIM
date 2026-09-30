@@ -51,21 +51,23 @@ type credentials struct {
 }
 type session struct{ Expires time.Time }
 type app struct {
-	modemMu    sync.RWMutex
-	manager    *modem.Manager
-	data       string
-	mu         sync.Mutex
-	messages   []message
-	peers      map[string]peerInfo
-	auth       credentials
-	setupToken string
-	sessions   map[string]session
-	attempts   map[string][]time.Time
-	sendMu     sync.Mutex
-	pollMu     sync.Mutex
-	voiceMu    sync.Mutex
-	voice      *voiceSession
-	lastError  string
+	modemMu     sync.RWMutex
+	manager     *modem.Manager
+	data        string
+	mu          sync.Mutex
+	messages    []message
+	peers       map[string]peerInfo
+	line        lineSnapshot
+	lineNumbers map[string]string
+	auth        credentials
+	setupToken  string
+	sessions    map[string]session
+	attempts    map[string][]time.Time
+	sendMu      sync.Mutex
+	pollMu      sync.Mutex
+	voiceMu     sync.Mutex
+	voice       *voiceSession
+	lastError   string
 }
 
 func (a *app) getModem() *modem.Manager {
@@ -127,11 +129,11 @@ func openApp(data string) (*app, error) {
 	if err := os.Chmod(data, 0700); err != nil {
 		return nil, err
 	}
-	a := &app{data: data, messages: []message{}, peers: map[string]peerInfo{}, sessions: map[string]session{}, attempts: map[string][]time.Time{}}
+	a := &app{data: data, messages: []message{}, peers: map[string]peerInfo{}, lineNumbers: map[string]string{}, sessions: map[string]session{}, attempts: map[string][]time.Time{}}
 	for _, item := range []struct {
 		file  string
 		value any
-	}{{"messages.json", &a.messages}, {"auth.json", &a.auth}, {"peers.json", &a.peers}} {
+	}{{"messages.json", &a.messages}, {"auth.json", &a.auth}, {"peers.json", &a.peers}, {"lines.json", &a.lineNumbers}} {
 		b, err := os.ReadFile(filepath.Join(data, item.file))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -145,6 +147,9 @@ func openApp(data string) (*app, error) {
 	}
 	if a.peers == nil {
 		a.peers = map[string]peerInfo{}
+	}
+	if a.lineNumbers == nil {
+		a.lineNumbers = map[string]string{}
 	}
 	changed := false
 	for i := range a.messages {
@@ -253,7 +258,7 @@ func (a *app) authAPI(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		setup := a.auth.Hash == ""
 		a.mu.Unlock()
-		reply(w, 200, map[string]any{"setup_required": setup, "authenticated": a.authenticated(r), "version": "0.2.0", "voice_implemented": true})
+		reply(w, 200, map[string]any{"setup_required": setup, "authenticated": a.authenticated(r), "version": "0.3.1", "voice_implemented": true})
 		return
 	}
 	if r.Method == "DELETE" {
@@ -341,7 +346,7 @@ func (a *app) authAPI(w http.ResponseWriter, r *http.Request) {
 func (a *app) status(w http.ResponseWriter, r *http.Request) {
 	m := a.getModem()
 	if m == nil {
-		reply(w, 200, map[string]any{"connected": false, "error": "模块未连接", "voice_available": false})
+		reply(w, 200, map[string]any{"connected": false, "error": "模块未连接", "voice_available": false, "line": a.lineInfo(false)})
 		return
 	}
 	s := m.GetFullStatus()
@@ -349,7 +354,7 @@ func (a *app) status(w http.ResponseWriter, r *http.Request) {
 	e := a.lastError
 	a.mu.Unlock()
 	voice := env("HOMESIM_AUDIO_DEVICE", "hw:Baiwang,0")
-	reply(w, 200, map[string]any{"connected": m.WaitReady(time.Millisecond), "operator": s.Operator, "network_mode": s.NetworkMode, "signal_dbm": s.SignalDBM, "sim_inserted": s.SimInserted, "reg_status": s.RegStatus, "reg_status_text": s.RegStatusText, "firmware": s.Firmware, "error": e, "voice_available": voice != "disabled", "audio_device": voice, "https": secure(r)})
+	reply(w, 200, map[string]any{"connected": m.WaitReady(time.Millisecond), "operator": s.Operator, "network_mode": s.NetworkMode, "signal_dbm": s.SignalDBM, "sim_inserted": s.SimInserted, "reg_status": s.RegStatus, "reg_status_text": s.RegStatusText, "firmware": s.Firmware, "error": e, "voice_available": voice != "disabled", "audio_device": voice, "https": secure(r), "line": a.lineInfo(true)})
 }
 func (a *app) list(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
@@ -432,13 +437,14 @@ func (a *app) refresh(w http.ResponseWriter, r *http.Request) {
 		reply(w, 202, map[string]bool{"accepted": true})
 		return
 	}
-	go func() { defer a.pollMu.Unlock(); m.CheckAllSMS(); m.RefreshDeviceInfo() }()
+	go func() { defer a.pollMu.Unlock(); a.updateLine(m, true); m.CheckAllSMS(); m.RefreshDeviceInfo() }()
 	reply(w, 202, map[string]bool{"accepted": true})
 }
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/auth", a.authAPI)
 	mux.HandleFunc("GET /api/status", a.status)
+	mux.HandleFunc("POST /api/line/number", a.setLineNumber)
 	mux.HandleFunc("GET /api/messages", a.list)
 	mux.HandleFunc("POST /api/messages/send", a.send)
 	mux.HandleFunc("POST /api/messages/refresh", a.refresh)
@@ -523,7 +529,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(c)
 	}()
-	log.Print("HomeSIM 0.2.0 listening")
+	log.Print("HomeSIM 0.3.1 listening")
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
@@ -554,11 +560,15 @@ func (a *app) modemLoop(ctx context.Context) {
 		m.WaitReady(15 * time.Second)
 		a.modemMu.Lock()
 		a.manager = m
+		a.mu.Lock()
+		a.line = lineSnapshot{}
+		a.mu.Unlock()
 		a.modemMu.Unlock()
 		ticker := time.NewTicker(12 * time.Second)
 		go func() {
 			if a.pollMu.TryLock() {
 				defer a.pollMu.Unlock()
+				a.updateLine(m, false)
 				m.CheckAllSMS()
 			}
 		}()
@@ -570,6 +580,7 @@ func (a *app) modemLoop(ctx context.Context) {
 			case <-ctx.Done():
 			case <-ticker.C:
 				if a.pollMu.TryLock() {
+					a.updateLine(m, false)
 					m.CheckAllSMS()
 					m.RefreshDeviceInfo()
 					a.pollMu.Unlock()
