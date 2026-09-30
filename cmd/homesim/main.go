@@ -43,6 +43,7 @@ type message struct {
 	Timestamp time.Time `json:"timestamp"`
 	Status    string    `json:"status"`
 	Code      string    `json:"code,omitempty"`
+	Read      bool      `json:"read"`
 }
 type credentials struct {
 	Username string `json:"username"`
@@ -55,6 +56,7 @@ type app struct {
 	data       string
 	mu         sync.Mutex
 	messages   []message
+	peers      map[string]peerInfo
 	auth       credentials
 	setupToken string
 	sessions   map[string]session
@@ -125,11 +127,11 @@ func openApp(data string) (*app, error) {
 	if err := os.Chmod(data, 0700); err != nil {
 		return nil, err
 	}
-	a := &app{data: data, messages: []message{}, sessions: map[string]session{}, attempts: map[string][]time.Time{}}
+	a := &app{data: data, messages: []message{}, peers: map[string]peerInfo{}, sessions: map[string]session{}, attempts: map[string][]time.Time{}}
 	for _, item := range []struct {
 		file  string
 		value any
-	}{{"messages.json", &a.messages}, {"auth.json", &a.auth}} {
+	}{{"messages.json", &a.messages}, {"auth.json", &a.auth}, {"peers.json", &a.peers}} {
 		b, err := os.ReadFile(filepath.Join(data, item.file))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -140,6 +142,9 @@ func openApp(data string) (*app, error) {
 		if err = json.Unmarshal(b, item.value); err != nil {
 			return nil, fmt.Errorf("%s damaged: %w", item.file, err)
 		}
+	}
+	if a.peers == nil {
+		a.peers = map[string]peerInfo{}
 	}
 	changed := false
 	for i := range a.messages {
@@ -248,7 +253,7 @@ func (a *app) authAPI(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		setup := a.auth.Hash == ""
 		a.mu.Unlock()
-		reply(w, 200, map[string]any{"setup_required": setup, "authenticated": a.authenticated(r), "version": "0.1.0", "voice_implemented": true})
+		reply(w, 200, map[string]any{"setup_required": setup, "authenticated": a.authenticated(r), "version": "0.2.0", "voice_implemented": true})
 		return
 	}
 	if r.Method == "DELETE" {
@@ -385,7 +390,7 @@ func (a *app) send(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	m := message{ID: b.RequestID, Peer: b.Phone, Content: b.Message, Direction: "outgoing", Timestamp: time.Now(), Status: "pending"}
+	m := message{ID: b.RequestID, Peer: b.Phone, Content: b.Message, Direction: "outgoing", Timestamp: time.Now(), Status: "pending", Read: true}
 	next := append(append([]message{}, a.messages...), m)
 	if err := atomicJSON(filepath.Join(a.data, "messages.json"), next); err != nil {
 		a.mu.Unlock()
@@ -437,6 +442,11 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/messages", a.list)
 	mux.HandleFunc("POST /api/messages/send", a.send)
 	mux.HandleFunc("POST /api/messages/refresh", a.refresh)
+	mux.HandleFunc("POST /api/messages/read", a.markRead)
+	mux.HandleFunc("POST /api/messages/estimate", a.estimate)
+	mux.HandleFunc("GET /api/peers", a.listPeers)
+	mux.HandleFunc("POST /api/peers", a.updatePeer)
+	mux.HandleFunc("GET /api/export", a.exportMessages)
 	mux.HandleFunc("GET /api/calls", a.calls)
 	mux.HandleFunc("POST /api/calls/action", a.callAction)
 	mux.HandleFunc("POST /api/voice/offer", a.offer)
@@ -513,7 +523,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(c)
 	}()
-	log.Print("HomeSIM 0.1.0 listening")
+	log.Print("HomeSIM 0.2.0 listening")
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
