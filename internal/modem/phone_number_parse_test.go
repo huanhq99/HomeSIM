@@ -28,6 +28,8 @@ func TestParseCNUM(t *testing.T) {
 			resp: "\r\n+CNUM: \"Own Number\",\"FFFFFFFF\",129\r\n\r\nOK\r\n",
 			want: "",
 		},
+		{name: "numeric alpha is not number", resp: `+CNUM: "13811111111","",129`, want: ""},
+		{name: "alpha omitted", resp: `+CNUM: ,"+8613800138000",145`, want: "+8613800138000"},
 		{
 			name: "missing cnum line",
 			resp: "\r\nOK\r\n",

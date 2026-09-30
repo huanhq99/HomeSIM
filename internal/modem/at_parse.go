@@ -1,6 +1,7 @@
 package modem
 
 import (
+	"encoding/csv"
 	"fmt"
 	"strconv"
 	"strings"
@@ -444,10 +445,12 @@ func parseCNUM(resp string) string {
 		if !strings.HasPrefix(line, "+CNUM:") {
 			continue
 		}
-		fields := extractQuotedFields(line)
-		for _, field := range fields {
-			candidate := canonicalPhoneCandidate(field)
-			if candidate != "" {
+		reader := csv.NewReader(strings.NewReader(strings.TrimSpace(strings.TrimPrefix(line, "+CNUM:"))))
+		reader.TrimLeadingSpace = true
+		fields, err := reader.Read()
+		// The first field is an alpha label, even when it contains digits.
+		if err == nil && len(fields) >= 2 {
+			if candidate := canonicalPhoneCandidate(fields[1]); candidate != "" {
 				return candidate
 			}
 		}
