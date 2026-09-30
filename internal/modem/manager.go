@@ -463,8 +463,7 @@ func (m *Manager) Start() error {
 		return errors.New("AT port not configured")
 	}
 
-	// 检查并强制接管被占用的端口
-	m.forceReleasePort(m.atPort)
+	// HomeSIM: never kill another service to seize the serial port.
 
 	var err error
 	for attempt := 0; attempt < 8; attempt++ {
@@ -881,7 +880,7 @@ func (m *Manager) initModem() {
 
 	// 3. 采集设备信息
 	m.collectDeviceInfo()
-	logger.Info(fmt.Sprintf("[%s] 模组初始化完成", m.cfg.ID), "imei", m.imei, "iccid", m.iccid)
+	logger.Info(fmt.Sprintf("[%s] 模组初始化完成", m.cfg.ID))
 }
 
 // RefreshDeviceInfo 重新采集设备信息（切卡后需要更新缓存）
