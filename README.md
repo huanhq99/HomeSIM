@@ -4,9 +4,13 @@
 
 此版本基于 MacCellular 的公开源码实现 Linux NAS 适配。NasAnySim 的公开仓库没有核心源码，因此本项目没有复制或依赖其闭源镜像。上游源码、许可证、版权声明均保留；个人非商业用途请遵守根目录 LICENSE。
 
-## 当前版本 0.1.0
+## 当前版本 0.2.0
 
-- 中文短信收发、长短信编解码、按号码查看会话、验证码复制。
+- 中文短信收发、长短信编解码、按号码查看会话、验证码与全文复制。
+- 未读标记、全部已读、收藏会话、可恢复归档、联系人备注，状态持久保存在 NAS。
+- 短信段数提示复用实际发送编码器，仅预览，不发送。
+- JSON/CSV 导出短信、备注与阅读状态（不包含账户或安装码）。
+- 浅色、深色、跟随系统主题；手机独立会话页；更新时保留阅读位置。
 - 短信保存到 NAS 持久化目录，保留模块中的短信副本。
 - 首次安装码创建账户，bcrypt 密码哈希，HttpOnly 会话，来源校验。
 - 发送前持久化，提交结果不明不会自动重发；请求标识避免同一次点击重复提交。
@@ -56,7 +60,7 @@ docker compose build --build-arg GOPROXY=https://goproxy.cn,direct
 
 服务启动后，在你自己的 NAS 终端查看 `data/setup-token`（不要发到聊天或提交 GitHub）。打开 `http://NAS局域网IP:8580/`，填写安装码，并自行设置用户名和密码。密码为 12–72 字节。已有账户时安装码不再有效；服务重启会要求重新登录。
 
-`data/auth.json`、`data/messages.json` 和 `data/setup-token` 均为私有运行文件。它们已排除在 Git 和 Docker 构建上下文之外。备份前停用服务，再备份整个 `data/` 目录。
+`data/auth.json`、`data/messages.json`、`data/peers.json` 和 `data/setup-token` 均为私有运行文件。它们已排除在 Git 和 Docker 构建上下文之外。备份前停用服务，再备份整个 `data/` 目录。
 
 ## HTTPS 和主屏幕
 
@@ -86,3 +90,7 @@ HomeSIM 的入口是 `cmd/homesim`。其他目录和 `UPSTREAM_README.md` 保留
 - Pion WebRTC 及短信、串口等依赖沿用各自许可证，见 THIRD_PARTY_NOTICES.md 与 licenses/。
 
 本项目不包含或再分发 NasAnySim 的闭源运行镜像，也不包含 MaVo 的模块侧语音运行文件。
+
+## 0.2 升级说明
+
+既有账户与短信直接沿用。旧短信默认未读；收藏、归档和联系人备注保存在 `data/peers.json`。归档不会删除模块或 NAS 上的短信，新短信仍按原会话的归档状态归类。自动已读仅作用于当前打开的会话、页面可见时。JSON/CSV 是数据导出，当前不提供导入；完整恢复请使用停用后备份的 `data/` 目录。升级前停用并备份 `data/`，保留旧镜像以便回退；新版本重启后需要重新登录。

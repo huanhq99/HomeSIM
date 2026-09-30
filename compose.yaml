@@ -1,7 +1,7 @@
 services:
   homesim:
     build: .
-    image: homesim:0.1.0
+    image: homesim:0.2.0
     container_name: homesim
     restart: unless-stopped
     # Direct host ICE candidates are needed for LAN WebRTC on Linux.
