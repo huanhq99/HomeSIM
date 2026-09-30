@@ -82,3 +82,9 @@ DerivedData/
 
 # Frontend dependencies are not used by the native DJOneHub page
 node_modules/
+
+# HomeSIM private runtime and local build artifacts
+/data/
+/deploy/homesim/homesim
+/build/
+*.tar.gz

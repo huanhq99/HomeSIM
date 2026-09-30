@@ -1,0 +1,30 @@
+services:
+  homesim:
+    build: .
+    image: homesim:0.1.0
+    container_name: homesim
+    restart: unless-stopped
+    # Direct host ICE candidates are needed for LAN WebRTC on Linux.
+    network_mode: host
+    devices:
+      - ${HOMESIM_TTY:-/dev/ttyUSB2}:/dev/ttyUSB2
+      - /dev/snd:/dev/snd
+    volumes:
+      - ./data:/data
+    environment:
+      HOMESIM_TTY: /dev/ttyUSB2
+      HOMESIM_AUDIO_DEVICE: ${HOMESIM_AUDIO_DEVICE:-hw:Baiwang,0}
+      # Bind only to the NAS LAN address. Configure a real TLS reverse proxy
+      # before using credentials across an untrusted network or enabling voice.
+      HOMESIM_LISTEN: ${HOMESIM_BIND_IP:-127.0.0.1}:8580
+      HOMESIM_TRUST_PROXY: ${HOMESIM_TRUST_PROXY:-0}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

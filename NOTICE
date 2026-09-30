@@ -7,3 +7,7 @@ MacCellular.
 
 Earlier USB, AT, eSIM and modem-management foundations retain their original
 copyright and license notices. See LICENSE and THIRD_PARTY_NOTICES.md.
+
+HomeSIM NAS adaptation
+HomeSIM adds a Linux Docker entry point, mobile web interface, local account authentication, durable personal SMS history and ALSA/WebRTC PCMU audio.
+The upstream modem control and SMS codec retain the root LICENSE and original required notices.

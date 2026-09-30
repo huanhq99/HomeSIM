@@ -1,0 +1,7 @@
+.git
+data
+outputs
+work
+*.tar.gz
+.env
+deploy/homesim/homesim

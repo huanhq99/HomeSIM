@@ -1,0 +1,5 @@
+services:
+  homesim:
+    build:
+      context: ./deploy/homesim
+      dockerfile: Dockerfile.prebuilt
