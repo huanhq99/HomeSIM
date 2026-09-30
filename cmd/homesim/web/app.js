@@ -5,6 +5,7 @@ let rows = [], peers = {}, selected = '', filter = 'all', authenticated = false,
 let pc = null, mic = null, voiceID = '', callRows = [], installPrompt = null, loading = false, sendID = '';
 let listKey = '', detailKey = '', detailLimit = 60, listPosition = 0, activeTab = 'inbox', markingRead = false, estimateRevision = 0, composeDirty = false;
 let readTask = Promise.resolve();
+let latestStatus = null, statusReceivedAt = 0, serviceFailed = false, revealedICCID = '', savingLine = false;
 const text = (el, s) => { el.textContent = s; };
 const format = t => new Date(t).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
 const clock = t => new Date(t).toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',hour12:false});
@@ -14,10 +15,10 @@ function button(label, className, fn, iconName) { const b = element('button',cla
 function nameOf(peer) { return peers[peer]?.name || peer; }
 function avatar(peer) { return element('span','avatar',peers[peer]?.name ? Array.from(peers[peer].name).slice(0,2).join('') : peer.slice(-2)); }
 async function api(path, options = {}) {
-  const r = await fetch(path, {credentials:'same-origin', ...options, headers:{'Content-Type':'application/json',...options.headers}});
-  const b = await r.json();
+  const controller = new AbortController(), timer = setTimeout(()=>controller.abort(), (!options.method || options.method==='GET')?10000:90000);
+  let r,b; try { r = await fetch(path, {credentials:'same-origin',signal:controller.signal, ...options, headers:{'Content-Type':'application/json',...options.headers}}); b = await r.json(); } finally { clearTimeout(timer); }
   if (!r.ok) {
-    if (r.status === 401 && path !== '/api/auth') { authenticated=false; $('#app').hidden=true; $('#auth').hidden=false; document.body.classList.remove('thread-open'); stopLocalAudio(); $('#compose').close(); $('#contact-dialog').close(); }
+    if (r.status === 401 && path !== '/api/auth') { authenticated=false; $('#app').hidden=true; $('#auth').hidden=false; document.body.classList.remove('thread-open'); stopLocalAudio(); $('#compose').close(); $('#contact-dialog').close(); $('#line-dialog').close(); }
     throw Error(b.error || '请求失败');
   }
   return b;
@@ -62,20 +63,61 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change',themeContro
 async function refresh() {
   if(!authenticated||loading)return; loading=true;
   try {
-    const [status,messages,metadata]=await Promise.all([api('/api/status'),api('/api/messages'),api('/api/peers')]);
-    rows=messages; peers=metadata; renderList(); renderDetail();
-    text($('#operator'),status.operator||'SIM 线路');
-    text($('#network'),status.connected?(status.network_mode||'蜂窝网络')+' · '+(status.reg_status_text||'等待注册'):'等待模块连接');
-    text($('#signal'),status.signal_dbm&&status.signal_dbm>-150?status.signal_dbm+' dBm':'—');
-    text($('#connection'),status.sim_inserted?'SIM 已识别':'等待 SIM');
-    $('#status-dot').classList.toggle('disconnected',!status.connected||!status.sim_inserted);
-    text($('#firmware'),status.firmware||'—'); text($('#audio-device'),status.audio_device||'—'); text($('#secure-state'),status.https?'HTTPS 安全连接':'局域网 HTTP');
-    text($('#sync-time'),clock(new Date())); $('#warning').hidden=!status.error; text($('#warning'),status.error||''); $('#offline-warning').hidden=true;
-    if(!isSecureContext)text($('#install-help'),'当前使用局域网 HTTP。配置受手机信任的 HTTPS 后，即可完整安装到主屏幕，并使用麦克风通话。短信功能现在可以使用。');
-    renderContacts(); autoRead();
-  } catch(e) { if(authenticated)$('#offline-warning').hidden=false; }
+    const results=await Promise.allSettled([api('/api/status'),api('/api/messages'),api('/api/peers')]);
+    if(!authenticated)return;
+    const statusResult=results[0];
+    if(statusResult.status==='fulfilled') {
+      const status=statusResult.value;latestStatus=status;statusReceivedAt=Date.now();serviceFailed=false;
+      text($('#operator'),status.operator||'SIM 线路');
+      text($('#network'),status.connected?(status.network_mode||'蜂窝网络')+' · '+(status.reg_status_text||'等待注册'):'等待模块连接');
+      text($('#firmware'),status.firmware||'—');text($('#audio-device'),status.audio_device||'—');text($('#secure-state'),status.https?'HTTPS 安全连接':'局域网 HTTP');
+      text($('#sync-time'),clock(new Date()));$('#warning').hidden=!status.error;text($('#warning'),status.error||'');
+      if(!isSecureContext)text($('#install-help'),'当前使用局域网 HTTP。配置受手机信任的 HTTPS 后，即可完整安装到主屏幕，并使用麦克风通话。短信功能现在可以使用。');
+    } else {serviceFailed=true;}
+    renderLineView();
+    const dataOK=results[1].status==='fulfilled'&&results[2].status==='fulfilled';
+    if(dataOK){rows=results[1].value;peers=results[2].value;renderList();renderDetail();renderContacts();autoRead()}
+    $('#offline-warning').hidden=!serviceFailed&&dataOK;
+    text($('#offline-warning'),serviceFailed?'暂时无法获取 NAS 状态，当前内容可能不是最新的。恢复连接后会自动同步。':'NAS 可以连接，但短信或备注同步失败；正在显示上次的内容。');
+  } catch(e) { if(authenticated){serviceFailed=true;renderLineView();$('#offline-warning').hidden=false} }
   finally {loading=false}
 }
+function renderLineView() {
+  const status=latestStatus||{},line=status.line||{},stale=statusReceivedAt>0&&Date.now()-statusReceivedAt>30000;
+  const view=UI.linePresentation(line,!serviceFailed,stale);
+  $('.line-card').dataset.state=view.state; text($('#connection'),view.label);$('#status-dot').className='dot '+view.tone;
+  text($('#operator'),(status.operator||'SIM 线路')+(!view.fresh&&status.operator?' · 上次检测':''));
+  text($('#network'),view.fresh&&line.module_connected?(status.network_mode||'蜂窝网络')+' · '+view.registration:'等待检测网络状态');
+  text($('#service-state'),serviceFailed?'无法连接':stale?'状态已过期':statusReceivedAt?'在线':'检查中');
+  text($('#module-state'),view.module);text($('#sim-state'),view.sim);text($('#registration-state'),view.registration);
+  text($('#signal'),view.fresh&&line.module_connected&&status.signal_dbm&&status.signal_dbm>-150?status.signal_dbm+' dBm':'—');
+  const number=view.fresh?line.number:'',source=number?({module:'模块读取',manual:'手动设置'}[line.number_source]||''):'';
+  text($('#line-number'),number|| (view.state==='checking'?'手机号读取中':view.fresh&&line.sim_state==='identified'?'未读取到手机号':'手机号待检测'));
+  text($('#number-source'),source);text($('#device-number'),number||'—');text($('#device-number-source'),source||'尚未获取');
+  const iccid=view.fresh?line.iccid:'';if(iccid!==renderLineView.iccid){revealedICCID='';renderLineView.iccid=iccid}
+  text($('#sim-iccid'),iccid?(revealedICCID===iccid?iccid:'•••• '+iccid.slice(-6)):'—');$('#reveal-iccid').hidden=!iccid;
+  text($('#reveal-iccid'),revealedICCID===iccid?'隐藏完整卡号':'显示完整卡号');
+  $('#edit-line-number').disabled=!view.fresh||!line.manual_allowed;
+  text($('#edit-line-number'),line.manual_number?'修改备用号码':'设置备用号码');
+  text($('#number-help'),!view.fresh?'等待最新模块状态，恢复连接后自动检测。':line.number_source==='module'?'号码来自 SIM 的本机号码记录；可能未由运营商核验。':line.number_source==='manual'?'当前显示你为这张 SIM 保存的备用号码。':line.number_detection==='query_failed'?'本机号码查询失败，将自动重试；也可以设置备用号码。':line.manual_allowed?'SIM 未返回本机号码，你可以设置备用号码。':'暂时无法确认 SIM 卡号，确认后才能绑定备用号码。');
+  const checked=line.checked_at&&line.age_seconds>=0?format(line.checked_at):'—';text($('#line-check-time'),checked);
+  if($('#line-dialog').open&&!savingLine){const changed=!view.fresh||!line.manual_allowed||$('#line-dialog').dataset.iccid!==iccid;$('#line-save').disabled=changed;if(changed)text($('#line-error'),'SIM 已变化或状态过期，请关闭后重新检测。')}
+}
+$('#reveal-iccid').addEventListener('click',()=>{const iccid=latestStatus?.line?.iccid||'';revealedICCID=revealedICCID===iccid?'':iccid;renderLineView()});
+$('#edit-line-number').addEventListener('click',()=>{
+  const line=latestStatus?.line;if(!line?.manual_allowed||serviceFailed)return;
+  $('#line-dialog').dataset.iccid=line.iccid;text($('#line-card-hint'),'仅用于当前 SIM · 卡号末尾 '+line.iccid.slice(-6));
+  $('#manual-number').value=line.manual_number||'';text($('#line-error'),'');$('#line-save').disabled=false;$('#line-dialog').showModal();$('#manual-number').focus();
+});
+$('#line-close').addEventListener('click',()=>$('#line-dialog').close());
+$('#line-form').addEventListener('submit',async e=>{
+  e.preventDefault();savingLine=true;$('#line-save').disabled=true;
+  try{await post('/api/line/number',{iccid:$('#line-dialog').dataset.iccid,number:$('#manual-number').value.trim()});$('#line-dialog').close();toast('备用号码已保存');await refresh()}
+  catch(e){text($('#line-error'),e.message)}finally{savingLine=false;$('#line-save').disabled=false;renderLineView()}
+});
+window.addEventListener('offline',()=>{serviceFailed=true;renderLineView()});window.addEventListener('online',refresh);
+setInterval(()=>{if(authenticated&&!document.hidden)renderLineView()},5000);
+
 function renderContacts() {
   const key=JSON.stringify(peers); if(renderContacts.key===key)return; renderContacts.key=key;
   const options=Object.entries(peers).filter(([,p])=>p.name).map(([number,p])=>{const o=element('option','',p.name);o.value=number;return o}); $('#contacts').replaceChildren(...options);

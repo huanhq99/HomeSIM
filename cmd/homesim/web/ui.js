@@ -25,7 +25,14 @@
     if (date.toDateString() === today.toDateString()) return '昨天';
     return date.toLocaleDateString('zh-CN', {year: 'numeric', month: 'long', day: 'numeric'});
   }
-  const api = {conversations, unreadIDs, statusLabel, dayLabel};
+  function linePresentation(line, reachable = true, stale = false) {
+    const state = !reachable ? 'service_offline' : stale ? 'stale' : line?.state || 'checking';
+    const labels = {online:'线路在线',offline:'模块离线',no_sim:'未识别 SIM',sim_unknown:'SIM 状态未知',unregistered:'网络未注册',network_unknown:'网络状态未知',stale:'检测状态已过期',checking:'正在检测',service_offline:'NAS 无法连接'};
+    const registration = line?.reg_status === 1 ? '已注册' : line?.reg_status === 5 ? '已注册（漫游）' : ({0:'未注册',2:'正在搜索网络',3:'注册被拒绝',4:'注册状态未知'}[line?.reg_status] || '状态未知');
+    const fresh = reachable && !stale && !['stale','checking','service_offline'].includes(state);
+    return {state,label:labels[state]||'状态未知',fresh,registration:fresh?registration:'待重新检测',module:fresh?(line?.module_connected?'已连接':'未连接'):'待重新检测',sim:fresh?({identified:'已识别',absent:'未识别',unknown:'状态未知'}[line?.sim_state]||'状态未知'):'待重新检测',tone:state==='online'?'online':['offline','service_offline'].includes(state)?'offline':['no_sim','unregistered'].includes(state)?'waiting':'unknown'};
+  }
+  const api = {conversations, unreadIDs, statusLabel, dayLabel, linePresentation};
   root.HomeSIMUI = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(globalThis);
