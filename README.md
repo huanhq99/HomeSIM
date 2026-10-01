@@ -4,7 +4,7 @@
 
 此版本基于 MacCellular 的公开源码实现 Linux NAS 适配。NasAnySim 的公开仓库没有核心源码，因此本项目没有复制或依赖其闭源镜像。上游源码、许可证、版权声明均保留；个人非商业用途请遵守根目录 LICENSE。
 
-## 当前版本 0.4.0
+## 当前版本 0.4.1
 
 0.4 加入多线路独立数据、按 SIM 保存网络设置、通话记录与回拨填号、Bark / Telegram / SMTP / Webhook 通知、诊断日志、兼容 eSIM 管理、认证 HTTP / SOCKS5 代理及代理流量统计。设备页按功能折叠，电话诊断区分 ICE 连接与两个方向的音频帧计数。H-Blog iPhone App 接入原生 WebRTC 与 CallKit，并提供可选 APNs 来电配对接口。功能边界、可选 Docker 权限、部署及回退见 [FEATURES-0.4.md](FEATURES-0.4.md)。
 

@@ -29,3 +29,5 @@ HTTP/CONNECT 与 SOCKS5 TCP 代理强制绑定当前模块的 USB 网口、使�
 升级前保存 data、当前源码、Compose 文件和旧二进制，禁止在有音频进程时升级。0.4 可用原来的单模块 Docker 权限启动；USB 热插拔、代理额外能力与公网 TURN 分开启用。回退旧程序时保留新增数据文件，不还原整个 data，以免覆盖升级后新短信。
 
 eSIM 依赖的 CI 证书包来自 https://euicc-manual.osmocom.org/docs/pki/ci/，补齐上游生成指令要求的文件。根 LICENSE、NOTICE、THIRD_PARTY_NOTICES.md 保留原项目条款。
+
+0.4.1 关闭登录用户名字段的自动大写、自动纠错与拼写检查，避免移动端改变用户名。iOS 27 模拟器的新增网页输入测试无法可靠输入，未据此宣称 App 登录或电话成功；原有入口和连接设置测试通过。

@@ -278,7 +278,7 @@ func (a *app) authAPI(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		setup := a.auth.Hash == ""
 		a.mu.Unlock()
-		reply(w, 200, map[string]any{"setup_required": setup, "authenticated": a.authenticated(r), "version": "0.4.0", "voice_implemented": true})
+		reply(w, 200, map[string]any{"setup_required": setup, "authenticated": a.authenticated(r), "version": "0.4.1", "voice_implemented": true})
 		return
 	}
 	if r.Method == "DELETE" {
@@ -570,7 +570,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(c)
 	}()
-	log.Print("HomeSIM 0.4.0 listening")
+	log.Print("HomeSIM 0.4.1 listening")
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
