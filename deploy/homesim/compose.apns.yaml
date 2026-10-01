@@ -1,0 +1,9 @@
+services:
+  homesim:
+    volumes:
+      - ${HOMESIM_APNS_KEY_FILE:?Select an APNs p8 file}:/run/apns/AuthKey.p8:ro
+    environment:
+      HOMESIM_APNS_KEY_FILE: /run/apns/AuthKey.p8
+      HOMESIM_APNS_KEY_ID: ${HOMESIM_APNS_KEY_ID:?Set APNs key ID}
+      HOMESIM_APNS_TEAM_ID: ${HOMESIM_APNS_TEAM_ID:?Set Apple Developer team ID}
+      HOMESIM_APNS_BUNDLE_ID: com.huanhq.hblog

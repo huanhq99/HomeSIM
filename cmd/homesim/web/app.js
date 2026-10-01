@@ -1,8 +1,12 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const UI = HomeSIMUI;
+let selectedDevice = localStorage.getItem('homesim.device') || 'primary';
+let nativeState = {ready:false,active:false};
+async function nativeRequest(command, extra={}) {const state=await window.HomeSIMNative.request({command,device_id:selectedDevice,...extra});nativeState=state;updatePhoneControls();return state;}
 let rows = [], peers = {}, selected = '', filter = 'all', authenticated = false, setup = false;
 let pc = null, mic = null, voiceID = '', callRows = [], installPrompt = null, loading = false, sendID = '';
+let callsReceivedAt = 0, dialing = false, connectingAudio = false;
 let listKey = '', detailKey = '', detailLimit = 60, listPosition = 0, activeTab = 'inbox', markingRead = false, estimateRevision = 0, composeDirty = false;
 let readTask = Promise.resolve();
 let latestStatus = null, statusReceivedAt = 0, serviceFailed = false, revealedICCID = '', savingLine = false;
@@ -15,6 +19,7 @@ function button(label, className, fn, iconName) { const b = element('button',cla
 function nameOf(peer) { return peers[peer]?.name || peer; }
 function avatar(peer) { return element('span','avatar',peers[peer]?.name ? Array.from(peers[peer].name).slice(0,2).join('') : peer.slice(-2)); }
 async function api(path, options = {}) {
+  if(path.startsWith('/api/')&&!/^\/api\/(auth|devices|notifications|native)(\/|\?|$)/.test(path)){const scoped=new URL(path,location.origin);if(!scoped.searchParams.has('device_id'))scoped.searchParams.set('device_id',selectedDevice);path=scoped.pathname+scoped.search;}
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(), (!options.method || options.method==='GET')?10000:90000);
   let r,b; try { r = await fetch(path, {credentials:'same-origin',signal:controller.signal, ...options, headers:{'Content-Type':'application/json',...options.headers}}); b = await r.json(); } finally { clearTimeout(timer); }
   if (!r.ok) {
@@ -40,7 +45,7 @@ async function init() {
     if(state.authenticated)loggedIn();
   } catch { text($('#auth-error'),'服务暂时无法连接，请刷新重试。'); }
 }
-function loggedIn() { authenticated=true; $('#auth').hidden=true; $('#app').hidden=false; refresh(); if('serviceWorker' in navigator && isSecureContext)navigator.serviceWorker.register('/sw.js').catch(()=>{}); }
+function loggedIn() { authenticated=true; $('#auth').hidden=true; $('#app').hidden=false; if(window.HomeSIMNative)nativeRequest('session').catch(e=>toast(e.message));refresh(); if(window.refreshFeatures)window.refreshFeatures();if('serviceWorker' in navigator && isSecureContext)navigator.serviceWorker.register('/sw.js').catch(()=>{}); }
 $('#login-form').addEventListener('submit',async e=>{
   e.preventDefault(); $('#login-button').disabled=true;
   try { await post('/api/auth',{username:$('#username').value,password:$('#password').value,setup_token:$('#setup-token').value.trim()}); $('#password').value=''; $('#setup-token').value=''; text($('#auth-error'),''); loggedIn(); }
@@ -62,9 +67,10 @@ $('#theme-select').addEventListener('change',()=>{HomeTheme.set($('#theme-select
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',themeControls); themeControls();
 async function refresh() {
   if(!authenticated||loading)return; loading=true;
+  const deviceAtStart=selectedDevice;
   try {
     const results=await Promise.allSettled([api('/api/status'),api('/api/messages'),api('/api/peers')]);
-    if(!authenticated)return;
+    if(!authenticated||deviceAtStart!==selectedDevice)return;
     const statusResult=results[0];
     if(statusResult.status==='fulfilled') {
       const status=statusResult.value;latestStatus=status;statusReceivedAt=Date.now();serviceFailed=false;
@@ -193,7 +199,8 @@ function renderDetail() {
 }
 async function changePeer(patch,peer=selected) {
   if(!peer)return;
-  try {const info=await post('/api/peers',{peer,...patch});peers[peer]=info;renderList();renderDetail();renderContacts();return info;}
+  const device=selectedDevice;
+  try {const info=await post('/api/peers?device_id='+encodeURIComponent(device),{peer,...patch});if(selectedDevice===device){peers[peer]=info;renderList();renderDetail();renderContacts()}return info;}
   catch(e){toast(e.message);throw e}
 }
 async function archiveThread(archived) {
@@ -201,12 +208,13 @@ async function archiveThread(archived) {
   try {await changePeer({archived},peer);backToList();toast(archived?'会话已归档，短信仍然保留':'会话已恢复到收件箱','撤销',async()=>{await changePeer({archived:!archived},peer)});}catch{}
 }
 function updateRead(ids,read) {
+  const device=selectedDevice;
   readTask = readTask.catch(()=>{}).then(async()=>{
   for(let i=0;i<ids.length;i+=500) {
-    const part=ids.slice(i,i+500);await post('/api/messages/read',{ids:part,read});
-    const changed=new Set(part);rows.forEach(m=>{if(changed.has(m.id))m.read=read});
+    const part=ids.slice(i,i+500);await post('/api/messages/read?device_id='+encodeURIComponent(device),{ids:part,read});
+    if(selectedDevice===device){const changed=new Set(part);rows.forEach(m=>{if(changed.has(m.id))m.read=read})}
   }
-  renderList();renderDetail();
+  if(selectedDevice===device){renderList();renderDetail()}
   });
   return readTask;
 }
@@ -256,15 +264,18 @@ $('#send-form').addEventListener('submit',async e=>{
   try {const m=await post('/api/messages/send',{phone:$('#recipient').value.trim(),message:$('#sms-content').value,request_id:sendID});if(m.status!=='submitted')throw Error('发送结果尚未确认，请先核对记录，不要重复发送');composeDirty=false;$('#compose').close();toast('短信已提交运营商');await refresh();filter='all';document.querySelectorAll('[data-filter]').forEach(b=>{const on=b.dataset.filter==='all';b.classList.toggle('active',on);b.setAttribute('aria-pressed',String(on))});selectPeer(m.peer);}
   catch(e){text($('#send-error'),e.message);await refresh()}finally{$('#send-button').disabled=false}
 });
-for(const k of '123456789*0#'){const b=document.createElement('button');text(b,k);b.addEventListener('click',async()=>{if(callRows.length===1&&callRows[0].state===0){try{await action('dtmf',{digit:k})}catch(e){toast(e.message)}}else{$('#dial-number').value+=k}});$('#keypad').append(b)}
-function stopLocalAudio(){if(pc){pc.onconnectionstatechange=null;pc.close();pc=null}if(mic){mic.getTracks().forEach(t=>t.stop());mic=null}voiceID='';$('#disconnect-audio').hidden=true;text($('#audio-state'),'音频未连接')}
-async function connectAudio(){if(!isSecureContext)throw Error('麦克风通话需要通过 HTTPS 打开家信');if(pc&&pc.connectionState==='connected')return;if(pc)stopLocalAudio();mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false});pc=new RTCPeerConnection({iceServers:[]});const audio=new Audio();audio.autoplay=true;pc.ontrack=e=>{audio.srcObject=e.streams[0]||new MediaStream([e.track]);audio.play().catch(()=>toast('请点一下页面启用声音'))};const sender=pc.addTrack(mic.getAudioTracks()[0],mic);const transceiver=pc.getTransceivers().find(t=>t.sender===sender);const codecs=RTCRtpSender.getCapabilities('audio').codecs.filter(c=>c.mimeType.toLowerCase()==='audio/pcmu');if(!codecs.length)throw Error('浏览器不支持此模块的语音格式');if(transceiver.setCodecPreferences)transceiver.setCodecPreferences(codecs);pc.onconnectionstatechange=()=>{const state=pc?.connectionState;text($('#audio-state'),state==='connected'?'麦克风已连接，可以拨打或接听。':'正在连接音频…');if(state==='failed'||state==='disconnected'){stopLocalAudio();api('/api/voice',{method:'DELETE'}).catch(()=>{});toast('音频连接已断开，请重新连接')}};const offer=await pc.createOffer();await pc.setLocalDescription(offer);await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('语音候选地址收集超时')),12000);if(pc.iceGatheringState==='complete'){clearTimeout(timer);resolve();return}pc.onicegatheringstatechange=()=>{if(pc?.iceGatheringState==='complete'){clearTimeout(timer);resolve()}}});const answer=await post('/api/voice/offer',pc.localDescription);voiceID=answer.voice_id;await pc.setRemoteDescription({type:answer.type,sdp:answer.sdp});$('#disconnect-audio').hidden=false}
-$('#connect-audio').addEventListener('click',async()=>{try{await connectAudio()}catch(e){stopLocalAudio();toast(e.message)}});$('#disconnect-audio').addEventListener('click',async()=>{try{await api('/api/voice',{method:'DELETE'});stopLocalAudio()}catch(e){stopLocalAudio();toast(e.message)}});
-async function action(action,extra={}){return post('/api/calls/action',{action,voice_id:voiceID,call_id:callRows[0]?.id||'',...extra})}
-$('#dial').addEventListener('click',async()=>{const b=$('#dial');b.disabled=true;try{await action('dial',{number:$('#dial-number').value.trim()});toast('正在拨号');await refreshCalls()}catch(e){toast(e.message)}finally{b.disabled=false}});
+function updatePhoneControls(){const fresh=callsReceivedAt>0&&Date.now()-callsReceivedAt<10000;const ready=window.HomeSIMNative?nativeState.ready:!!voiceID&&pc?.connectionState==='connected';const reason=UI.dialReadiness($('#dial-number').value,callRows,ready,fresh);$('#dial').disabled=dialing||!!reason;$('#dial').title=reason;$('#connect-audio').disabled=connectingAudio||ready;text($('#connect-audio'),connectingAudio?'正在连接…':ready?'音频已连接':window.HomeSIMNative?'连接原生音频':'连接麦克风');$('#answer').disabled=!fresh||(window.HomeSIMNative?false:!ready);}
+$('#dial-number').addEventListener('input',updatePhoneControls);
+for(const k of '123456789*0#'){const b=document.createElement('button');text(b,k);b.addEventListener('click',async()=>{if(callRows.length===1&&callRows[0].state===0){try{await action('dtmf',{digit:k})}catch(e){toast(e.message)}}else{$('#dial-number').value+=k;updatePhoneControls()}});$('#keypad').append(b)}
+function stopLocalAudio(){if(pc){pc.onconnectionstatechange=null;pc.close();pc=null}if(mic){mic.getTracks().forEach(t=>t.stop());mic=null}voiceID='';$('#disconnect-audio').hidden=true;text($('#audio-state'),'音频未连接');updatePhoneControls()}
+async function connectAudio(){if(window.HomeSIMNative){await nativeRequest('connect');$('#disconnect-audio').hidden=false;text($('#audio-state'),'原生音频已连接；接通后确认双向声音。');return}return connectBrowserAudio()}
+async function connectBrowserAudio(){if(!isSecureContext)throw Error('麦克风通话需要通过 HTTPS 打开家信');if(pc&&pc.connectionState==='connected')return;if(pc)stopLocalAudio();mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false});const ice=await api('/api/voice/config');pc=new RTCPeerConnection({iceServers:ice.iceServers,iceTransportPolicy:ice.iceTransportPolicy});const audio=new Audio();audio.autoplay=true;pc.ontrack=e=>{audio.srcObject=e.streams[0]||new MediaStream([e.track]);audio.play().catch(()=>toast('请点一下页面启用声音'))};const sender=pc.addTrack(mic.getAudioTracks()[0],mic);const transceiver=pc.getTransceivers().find(t=>t.sender===sender);const codecs=RTCRtpSender.getCapabilities('audio').codecs.filter(c=>c.mimeType.toLowerCase()==='audio/pcmu');if(!codecs.length)throw Error('浏览器不支持此模块的语音格式');if(transceiver.setCodecPreferences)transceiver.setCodecPreferences(codecs);pc.onconnectionstatechange=()=>{const state=pc?.connectionState;updatePhoneControls();text($('#audio-state'),state==='connected'?'浏览器音频已连接；双向声音需接通后确认。':'正在连接音频…');if(state==='failed'||state==='disconnected'){stopLocalAudio();api('/api/voice',{method:'DELETE'}).catch(()=>{});toast('音频连接已断开，请重新连接')}};const offer=await pc.createOffer();await pc.setLocalDescription(offer);await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('语音候选地址收集超时')),12000);if(pc.iceGatheringState==='complete'){clearTimeout(timer);resolve();return}pc.onicegatheringstatechange=()=>{if(pc?.iceGatheringState==='complete'){clearTimeout(timer);resolve()}}});const answer=await post('/api/voice/offer',pc.localDescription);voiceID=answer.voice_id;await pc.setRemoteDescription({type:answer.type,sdp:answer.sdp});$('#disconnect-audio').hidden=false;updatePhoneControls()}
+$('#connect-audio').addEventListener('click',async()=>{if(connectingAudio)return;connectingAudio=true;updatePhoneControls();text($('#audio-state'),'正在连接浏览器与 NAS 音频…');try{await connectAudio()}catch(e){stopLocalAudio();toast(e.message)}finally{connectingAudio=false;updatePhoneControls()}});$('#disconnect-audio').addEventListener('click',async()=>{try{if(window.HomeSIMNative){await nativeRequest('disconnect');nativeState.ready=false} else await api('/api/voice',{method:'DELETE'});stopLocalAudio()}catch(e){stopLocalAudio();toast(e.message)}});
+async function action(action,extra={}){if(window.HomeSIMNative)return nativeRequest('action',{action,...extra});return post('/api/calls/action',{action,voice_id:voiceID,call_id:callRows[0]?.id||'',...extra})}
+$('#dial').addEventListener('click',async()=>{if(dialing)return;dialing=true;updatePhoneControls();try{await action('dial',{number:$('#dial-number').value.trim()});toast('拨号指令已提交，正在确认通话状态');await refreshCalls()}catch(e){toast(e.message);await refreshCalls()}finally{dialing=false;updatePhoneControls()}});
 for(const name of ['answer','reject','hangup'])$('#'+name).addEventListener('click',async()=>{try{await action(name);await refreshCalls()}catch(e){toast(e.message)}});
-async function refreshCalls(){if(!authenticated||$('#phone').hidden)return;try{callRows=await api('/api/calls');const c=callRows[0];text($('#call-number'),c?(c.number||'未知号码'):'线路空闲');text($('#call-state'),c?({0:'通话中',1:'通话保持',2:'正在拨号',3:'等待对方接听',4:'有来电',5:'有等待接听的来电'}[c.state]||'状态未知'):'电话音频需要 HTTPS，以及浏览器麦克风权限。');const ring=c&&(c.state===4||c.state===5);$('#answer').hidden=!ring;$('#reject').hidden=!ring;$('#hangup').hidden=!c||ring;}catch(e){text($('#call-state'),e.message)}}
-$('#logout').addEventListener('click',async()=>{try{if(pc)await api('/api/voice',{method:'DELETE'});stopLocalAudio();await api('/api/auth',{method:'DELETE'});composeDirty=false;location.reload()}catch(e){toast(e.message)}});
+async function refreshCalls(){if(!authenticated)return;const deviceAtStart=selectedDevice;try{const fetched=await api('/api/calls');if(deviceAtStart!==selectedDevice)return;callRows=fetched;if(window.HomeSIMNative)await nativeRequest('state');callsReceivedAt=Date.now();const c=callRows[0];text($('#call-number'),c?(c.number||'模块未提供号码'):'线路空闲');text($('#call-state'),c?({0:'模块报告：语音通话已接通',1:'通话保持',2:'正在拨号',3:'等待对方接听',4:'有来电',5:'有等待接听的来电'}[c.state]||'状态未知'):'暂无语音通话。连接音频后可拨打或接听。');const ring=c&&(c.state===4||c.state===5);if(ring&&refreshCalls.ring!==selectedDevice+':'+c.id){refreshCalls.ring=selectedDevice+':'+c.id;toast('有来电 · '+(c.number||'未知号码'),'查看',()=>switchTab('phone'))}if(!ring)refreshCalls.ring='';$('#answer').hidden=!ring;$('#reject').hidden=!ring;$('#hangup').hidden=!c||ring;}catch(e){callsReceivedAt=0;text($('#call-number'),'线路状态待确认');text($('#call-state'),e.message);for(const id of ['answer','reject','hangup'])$('#'+id).hidden=true}finally{updatePhoneControls()}}
+$('#logout').addEventListener('click',async()=>{try{if(window.HomeSIMNative)await nativeRequest('logout');if(pc)await api('/api/voice',{method:'DELETE'});stopLocalAudio();await api('/api/auth',{method:'DELETE'});composeDirty=false;location.reload()}catch(e){toast(e.message)}});
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('#install').hidden=false});$('#install').addEventListener('click',async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;$('#install').hidden=true}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();refreshCalls();autoRead()}});setInterval(()=>{if(!document.hidden)refresh()},12000);setInterval(()=>{if(!document.hidden)refreshCalls()},3000);init();
 

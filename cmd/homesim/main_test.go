@@ -105,8 +105,44 @@ func TestAudioCodecAndCallParser(t *testing.T) {
 			t.Fatalf("G711 roundtrip %d %d", x, got)
 		}
 	}
-	rows := parseCalls("\r\n+CLCC: 1,1,4,0,0,\"+8613800000000\",145\r\nOK\r\n")
-	if len(rows) != 1 || rows[0].State != 4 || rows[0].Number != "+8613800000000" {
+	rows, err := parseCalls("\r\n+CLCC: 1,1,4,0,0,\"+8613800000000\",145\r\nOK\r\n")
+	if err != nil || len(rows) != 1 || rows[0].State != 4 || rows[0].Number != "+8613800000000" {
 		t.Fatal("incoming call parsing")
+	}
+}
+
+func TestCallSnapshotSeparatesDataFromVoice(t *testing.T) {
+	for _, tc := range []struct {
+		name, response string
+		count          int
+		invalid        bool
+	}{
+		{"LTE data only", "+CLCC: 1,0,0,1,0,\"\",128\r\nOK", 0, false},
+		{"data and incoming voice", "+CLCC: 1,0,0,1,0,\"\",128\r\n+CLCC: 2, 1, 4, 0, 0, \"+8613800000000\",145\r\nOK", 1, false},
+		{"voice without number", "+CLCC: 1,0,0,0,0\r\nOK", 1, false},
+		{"unknown call mode", "+CLCC: 1,0,0,9,0\r\nOK", 0, true},
+		{"malformed snapshot", "+CLCC: malformed\r\nOK", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := parseCalls(tc.response)
+			if (err != nil) != tc.invalid || len(rows) != tc.count {
+				t.Fatalf("got %v, %v", rows, err)
+			}
+		})
+	}
+}
+
+func TestDialErrorsDescribeActualBlocker(t *testing.T) {
+	if got := dialProblem("bad", nil, true); !strings.Contains(got, "号码格式") {
+		t.Fatal(got)
+	}
+	if got := dialProblem("10086", []call{{State: 0}}, true); !strings.Contains(got, "已有语音通话") {
+		t.Fatal(got)
+	}
+	if got := dialProblem("10086", nil, false); !strings.Contains(got, "音频链路") {
+		t.Fatal(got)
+	}
+	if got := dialProblem("10086", nil, true); got != "" {
+		t.Fatal(got)
 	}
 }

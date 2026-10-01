@@ -1,0 +1,5 @@
+# Needed only for Linux kernels requiring CAP_NET_RAW for SO_BINDTODEVICE.
+# The UI still enforces USB-module interfaces and authenticated LAN listeners.
+services:
+  homesim:
+    cap_add: [NET_RAW]

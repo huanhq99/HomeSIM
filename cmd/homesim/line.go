@@ -123,8 +123,11 @@ func lineState(s lineSnapshot, attached bool, now time.Time) string {
 }
 func (a *app) lineInfo(attached bool) map[string]any {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	s := a.line
+	a.mu.Unlock()
+	account := a.accountApp()
+	account.mu.Lock()
+	defer account.mu.Unlock()
 	state := lineState(s, attached, time.Now())
 	number, source := "", "unavailable"
 	// Do not advertise an old card or its manual number while probes are stale.
@@ -133,7 +136,7 @@ func (a *app) lineInfo(attached bool) map[string]any {
 	manual := ""
 	if identityCurrent {
 		iccid = s.ICCID
-		manual = a.lineNumbers[iccid]
+		manual = account.lineNumbers[iccid]
 		if s.Number != "" {
 			number, source = s.Number, "module"
 		} else if iccid != "" && manual != "" {
@@ -168,14 +171,17 @@ func (a *app) setLineNumber(w http.ResponseWriter, r *http.Request) {
 	}
 	attached := a.getModem() != nil
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	s := a.line
+	a.mu.Unlock()
 	if !attached || !s.Connected || s.SIMState != "identified" || s.ICCID != b.ICCID || s.CheckedAt.IsZero() || time.Since(s.CheckedAt) > 45*time.Second {
 		fail(w, 409, "SIM 已变化或状态过期，请重新检测后再保存")
 		return
 	}
-	next := make(map[string]string, len(a.lineNumbers)+1)
-	for k, v := range a.lineNumbers {
+	account := a.accountApp()
+	account.mu.Lock()
+	defer account.mu.Unlock()
+	next := make(map[string]string, len(account.lineNumbers)+1)
+	for k, v := range account.lineNumbers {
 		next[k] = v
 	}
 	if b.Number == "" {
@@ -183,10 +189,10 @@ func (a *app) setLineNumber(w http.ResponseWriter, r *http.Request) {
 	} else {
 		next[b.ICCID] = b.Number
 	}
-	if err := atomicJSON(filepath.Join(a.data, "lines.json"), next); err != nil {
+	if err := atomicJSON(filepath.Join(account.data, "lines.json"), next); err != nil {
 		fail(w, 503, "号码未保存，请检查 NAS 空间")
 		return
 	}
-	a.lineNumbers = next
+	account.lineNumbers = next
 	reply(w, 200, map[string]bool{"ok": true})
 }

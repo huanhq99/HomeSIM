@@ -51,6 +51,16 @@ type credentials struct {
 }
 type session struct{ Expires time.Time }
 type app struct {
+	root        *app
+	deviceID    string
+	devicePort  string
+	audioDevice string
+	registry    *deviceRegistry
+	history     callHistory
+	features    featureState
+	noticeQueue chan notificationTask
+	native      nativeState
+	proxy       proxyState
 	modemMu     sync.RWMutex
 	manager     *modem.Manager
 	data        string
@@ -187,7 +197,13 @@ func (a *app) receive(peer, body string, ts time.Time) {
 	sum := sha256.Sum256([]byte(peer + "\x00" + body + "\x00" + ts.UTC().Format(time.RFC3339Nano)))
 	id := hex.EncodeToString(sum[:])
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	saved := false
+	defer func() {
+		a.mu.Unlock()
+		if saved {
+			a.notify("家信 · 新短信", body)
+		}
+	}()
 	for _, m := range a.messages {
 		if m.ID == id {
 			return
@@ -204,6 +220,7 @@ func (a *app) receive(peer, body string, ts time.Time) {
 		return
 	}
 	a.messages = next
+	saved = true
 }
 func reply(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -229,6 +246,9 @@ func body(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 func (a *app) authenticated(r *http.Request) bool {
+	if a.nativeAuthenticated(r) {
+		return true
+	}
 	c, err := r.Cookie("homesim")
 	if err != nil {
 		return false
@@ -258,7 +278,7 @@ func (a *app) authAPI(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		setup := a.auth.Hash == ""
 		a.mu.Unlock()
-		reply(w, 200, map[string]any{"setup_required": setup, "authenticated": a.authenticated(r), "version": "0.3.1", "voice_implemented": true})
+		reply(w, 200, map[string]any{"setup_required": setup, "authenticated": a.authenticated(r), "version": "0.4.0", "voice_implemented": true})
 		return
 	}
 	if r.Method == "DELETE" {
@@ -353,7 +373,7 @@ func (a *app) status(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	e := a.lastError
 	a.mu.Unlock()
-	voice := env("HOMESIM_AUDIO_DEVICE", "hw:Baiwang,0")
+	voice := a.audioName()
 	reply(w, 200, map[string]any{"connected": m.WaitReady(time.Millisecond), "operator": s.Operator, "network_mode": s.NetworkMode, "signal_dbm": s.SignalDBM, "sim_inserted": s.SimInserted, "reg_status": s.RegStatus, "reg_status_text": s.RegStatusText, "firmware": s.Firmware, "error": e, "voice_available": voice != "disabled", "audio_device": voice, "https": secure(r), "line": a.lineInfo(true)})
 }
 func (a *app) list(w http.ResponseWriter, r *http.Request) {
@@ -443,20 +463,39 @@ func (a *app) refresh(w http.ResponseWriter, r *http.Request) {
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/auth", a.authAPI)
-	mux.HandleFunc("GET /api/status", a.status)
-	mux.HandleFunc("POST /api/line/number", a.setLineNumber)
-	mux.HandleFunc("GET /api/messages", a.list)
-	mux.HandleFunc("POST /api/messages/send", a.send)
-	mux.HandleFunc("POST /api/messages/refresh", a.refresh)
-	mux.HandleFunc("POST /api/messages/read", a.markRead)
-	mux.HandleFunc("POST /api/messages/estimate", a.estimate)
-	mux.HandleFunc("GET /api/peers", a.listPeers)
-	mux.HandleFunc("POST /api/peers", a.updatePeer)
-	mux.HandleFunc("GET /api/export", a.exportMessages)
-	mux.HandleFunc("GET /api/calls", a.calls)
-	mux.HandleFunc("POST /api/calls/action", a.callAction)
-	mux.HandleFunc("POST /api/voice/offer", a.offer)
-	mux.HandleFunc("DELETE /api/voice", a.stopVoice)
+	mux.HandleFunc("GET /api/status", a.scoped((*app).status))
+	mux.HandleFunc("POST /api/line/number", a.scoped((*app).setLineNumber))
+	mux.HandleFunc("GET /api/messages", a.scoped((*app).list))
+	mux.HandleFunc("POST /api/messages/send", a.scoped((*app).send))
+	mux.HandleFunc("POST /api/messages/refresh", a.scoped((*app).refresh))
+	mux.HandleFunc("POST /api/messages/read", a.scoped((*app).markRead))
+	mux.HandleFunc("POST /api/messages/estimate", a.scoped((*app).estimate))
+	mux.HandleFunc("GET /api/peers", a.scoped((*app).listPeers))
+	mux.HandleFunc("POST /api/peers", a.scoped((*app).updatePeer))
+	mux.HandleFunc("GET /api/export", a.scoped((*app).exportMessages))
+	mux.HandleFunc("GET /api/calls", a.scoped((*app).calls))
+	mux.HandleFunc("POST /api/calls/action", a.scoped((*app).callAction))
+	mux.HandleFunc("POST /api/voice/offer", a.scoped((*app).offer))
+	mux.HandleFunc("DELETE /api/voice", a.scoped((*app).stopVoice))
+	mux.HandleFunc("GET /api/voice/config", a.voiceConfig)
+	mux.HandleFunc("GET /api/calls/history", a.scoped((*app).callRecords))
+	mux.HandleFunc("GET /api/diagnostics", a.scoped((*app).diagnostics))
+	mux.HandleFunc("GET /api/devices", a.listDevices)
+	mux.HandleFunc("POST /api/devices", a.updateDevice)
+	mux.HandleFunc("GET /api/devices/discover", a.discoveredDevices)
+	mux.HandleFunc("GET /api/network", a.scoped((*app).networkInfo))
+	mux.HandleFunc("POST /api/network", a.scoped((*app).networkUpdate))
+	mux.HandleFunc("POST /api/network/ussd", a.scoped((*app).ussd))
+	mux.HandleFunc("POST /api/esim/inspect", a.scoped((*app).esimInspect))
+	mux.HandleFunc("POST /api/esim/action", a.scoped((*app).esimAction))
+	mux.HandleFunc("GET /api/jobs", a.scoped((*app).jobStatus))
+	mux.HandleFunc("GET /api/notifications", a.notificationConfig)
+	mux.HandleFunc("POST /api/notifications", a.notificationConfig)
+	mux.HandleFunc("GET /api/native/capabilities", a.nativeCapabilities)
+	mux.HandleFunc("POST /api/native/register", a.nativeRegister)
+	mux.HandleFunc("DELETE /api/native/register", a.nativeRegister)
+	mux.HandleFunc("GET /api/proxy", a.scoped((*app).proxyInfo))
+	mux.HandleFunc("POST /api/proxy", a.scoped((*app).proxyUpdate))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { reply(w, 200, map[string]bool{"ok": true}) })
 	files, _ := fs.Sub(assets, "web")
 	mux.Handle("/", http.FileServer(http.FS(files)))
@@ -519,8 +558,10 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if os.Getenv("HOMESIM_DEMO") != "1" {
-		go a.modemLoop(ctx)
+	a.noticeQueue = make(chan notificationTask, 64)
+	go a.notificationLoop(ctx)
+	if err := a.startDevices(ctx); err != nil {
+		log.Fatal(err)
 	}
 	server := &http.Server{Addr: env("HOMESIM_LISTEN", ":8580"), Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 8192}
 	go func() {
@@ -529,7 +570,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(c)
 	}()
-	log.Print("HomeSIM 0.3.1 listening")
+	log.Print("HomeSIM 0.4.0 listening")
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
@@ -537,7 +578,7 @@ func main() {
 func (a *app) modemLoop(ctx context.Context) {
 	for ctx.Err() == nil {
 		disconnected := make(chan struct{}, 1)
-		m, err := modem.New(config.DeviceConfig{ID: "homesim", Name: "HomeSIM", ATPort: env("HOMESIM_TTY", "/dev/ttyUSB2"), BaudRate: 115200, DataBits: 8, StopBits: 1, Parity: "none", SMSEnabled: true, DeviceBackend: "at"})
+		m, err := modem.New(config.DeviceConfig{ID: a.deviceID, Name: "HomeSIM", ATPort: a.deviceTTY(), BaudRate: 115200, DataBits: 8, StopBits: 1, Parity: "none", SMSEnabled: true, DeviceBackend: "at"})
 		if err == nil {
 			m.SetSMSCallback(a.receive)
 			m.SetOnDisconnectWithReason(func(string) {
@@ -549,6 +590,9 @@ func (a *app) modemLoop(ctx context.Context) {
 			err = m.Start()
 		}
 		if err != nil {
+			if m != nil {
+				m.StopAndWait(3 * time.Second)
+			}
 			log.Print("module connection failed; retrying")
 			select {
 			case <-ctx.Done():
@@ -597,6 +641,8 @@ func (a *app) modemLoop(ctx context.Context) {
 		}
 		a.modemMu.Unlock()
 		m.StopAndWait(3 * time.Second)
+		a.interruptCalls()
+		a.addEvent("module", "模块断开，等待重新连接")
 		if ctx.Err() != nil {
 			return
 		}

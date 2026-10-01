@@ -1,0 +1,19 @@
+# Run on the public VPS, after approving new public ports and certificate access.
+services:
+  homesim-turn:
+    image: coturn/coturn:4.18.0-r0
+    container_name: homesim-turn
+    network_mode: host
+    restart: unless-stopped
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ${TURN_CERT_FILE:?Existing trusted certificate}:/run/tls/cert.pem:ro
+      - ${TURN_KEY_FILE:?Existing certificate private key}:/run/tls/key.pem:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}

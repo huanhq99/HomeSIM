@@ -32,7 +32,14 @@
     const fresh = reachable && !stale && !['stale','checking','service_offline'].includes(state);
     return {state,label:labels[state]||'状态未知',fresh,registration:fresh?registration:'待重新检测',module:fresh?(line?.module_connected?'已连接':'未连接'):'待重新检测',sim:fresh?({identified:'已识别',absent:'未识别',unknown:'状态未知'}[line?.sim_state]||'状态未知'):'待重新检测',tone:state==='online'?'online':['offline','service_offline'].includes(state)?'offline':['no_sim','unregistered'].includes(state)?'waiting':'unknown'};
   }
-  const api = {conversations, unreadIDs, statusLabel, dayLabel, linePresentation};
+  function dialReadiness(number, calls, audioReady, callsFresh) {
+    if (!callsFresh) return '正在确认线路状态';
+    if (calls.length) return '线路已有语音通话';
+    if (!/^\+?[0-9]{3,20}$/.test(number.trim())) return '请输入正确的电话号码';
+    if (!audioReady) return '请先连接音频并等待连接完成';
+    return '';
+  }
+  const api = {conversations, unreadIDs, statusLabel, dayLabel, linePresentation, dialReadiness};
   root.HomeSIMUI = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(globalThis);

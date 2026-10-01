@@ -1,0 +1,12 @@
+# Optional: validate and approve the expanded USB device access before enabling.
+services:
+  homesim:
+    volumes:
+      - /dev:/host-dev:ro
+    device_cgroup_rules:
+      - 'c 188:* rw'
+      - 'c 166:* rw'
+      - 'c 116:* rw'
+    environment:
+      HOMESIM_DEV_ROOT: /host-dev
+      HOMESIM_TTY: ${HOMESIM_PRIMARY_PATH:?Set the NAS stable AT path under /host-dev/serial/by-path}

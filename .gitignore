@@ -88,3 +88,8 @@ node_modules/
 /deploy/homesim/homesim
 /build/
 *.tar.gz
+
+# Public source templates and generated GSMA CI trust anchors, never private keys.
+!/deploy/homesim/compose.apns.yaml
+!/third_party/euicc-go/http/rootci/bundle.pem
+!/third_party/euicc-go/http/rootci/bundle-tests.pem

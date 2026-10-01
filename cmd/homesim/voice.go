@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/webrtc/v4"
@@ -33,18 +34,35 @@ type voiceSession struct {
 	ownedID     string
 	closeOnce   sync.Once
 	mu          sync.Mutex
+	captured    atomic.Uint64
+	played      atomic.Uint64
 }
 
-var clccPattern = regexp.MustCompile(`\+CLCC:\s*(\d+),(\d+),(\d+),\d+,\d+(?:,"([+0-9]*)")?`)
+var clccPattern = regexp.MustCompile(`^\+CLCC:\s*(\d+)\s*,\s*([01])\s*,\s*([0-5])\s*,\s*(\d+)\s*,\s*[01](?:\s*,\s*"([+0-9]*)")?(?:\s*,.*)?$`)
 
-func parseCalls(s string) []call {
+func parseCalls(s string) ([]call, error) {
 	rows := []call{}
-	for _, m := range clccPattern.FindAllStringSubmatch(s, -1) {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "+CLCC:") {
+			continue
+		}
+		m := clccPattern.FindStringSubmatch(line)
+		if m == nil {
+			return nil, errors.New("模块返回的通话状态无法识别，请暂勿拨号")
+		}
+		// CLCC mode 1/2 describes data/fax calls, not telephone calls.
+		if m[4] == "1" || m[4] == "2" {
+			continue
+		}
+		if m[4] != "0" {
+			return nil, errors.New("模块返回了未知通话类型，请暂勿拨号")
+		}
 		d, _ := strconv.Atoi(m[2])
 		state, _ := strconv.Atoi(m[3])
-		rows = append(rows, call{m[1], d, state, m[4]})
+		rows = append(rows, call{m[1], d, state, m[5]})
 	}
-	return rows
+	return rows, nil
 }
 func (a *app) currentCalls() ([]call, error) {
 	m := a.getModem()
@@ -55,7 +73,19 @@ func (a *app) currentCalls() ([]call, error) {
 	if err != nil {
 		return nil, errors.New("暂时无法读取通话状态")
 	}
-	return parseCalls(s), nil
+	return parseCalls(s)
+}
+func dialProblem(number string, rows []call, audioReady bool) string {
+	if !phonePattern.MatchString(number) {
+		return "号码格式不正确，请输入电话号码（国际号码请带 + 国家码）"
+	}
+	if len(rows) != 0 {
+		return "线路已有语音通话，请结束当前通话后再拨打"
+	}
+	if !audioReady {
+		return "音频链路尚未连接，请连接麦克风并等待连接完成"
+	}
+	return ""
 }
 func (a *app) calls(w http.ResponseWriter, r *http.Request) {
 	c, err := a.currentCalls()
@@ -66,6 +96,9 @@ func (a *app) calls(w http.ResponseWriter, r *http.Request) {
 	reply(w, 200, c)
 }
 func owner(r *http.Request) string {
+	if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		return "native:" + tokenHash(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	}
 	c, _ := r.Cookie("homesim")
 	if c == nil {
 		return ""
@@ -111,8 +144,8 @@ func (a *app) callAction(w http.ResponseWriter, r *http.Request) {
 	cmd := ""
 	switch b.Action {
 	case "dial":
-		if !phonePattern.MatchString(b.Number) || len(rows) != 0 || !audioReady {
-			fail(w, 409, "请先连接麦克风，确认线路空闲和号码正确")
+		if problem := dialProblem(b.Number, rows, audioReady); problem != "" {
+			fail(w, 409, problem)
 			return
 		}
 		cmd = "ATD" + b.Number + ";"
@@ -200,11 +233,17 @@ func (a *app) closeVoice(v *voiceSession) {
 	v.close()
 }
 func (a *app) offer(w http.ResponseWriter, r *http.Request) {
+	if !a.sendMu.TryLock() {
+		fail(w, 409, "线路正在执行其他操作，请稍后连接音频")
+		return
+	}
+	defer a.sendMu.Unlock()
 	if a.getModem() == nil {
 		fail(w, 503, "模块未连接")
 		return
 	}
-	if env("HOMESIM_AUDIO_DEVICE", "hw:Baiwang,0") == "disabled" {
+	device := a.audioName()
+	if device == "disabled" {
 		fail(w, 503, "音频未启用")
 		return
 	}
@@ -230,7 +269,7 @@ func (a *app) offer(w http.ResponseWriter, r *http.Request) {
 	settings := webrtc.SettingEngine{}
 	_ = settings.SetEphemeralUDPPortRange(8590, 8600)
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(engine), webrtc.WithSettingEngine(settings))
-	pc, err := api.NewPeerConnection(webrtc.Configuration{})
+	pc, err := api.NewPeerConnection(voiceICE())
 	if err != nil {
 		a.voiceMu.Unlock()
 		fail(w, 500, "语音初始化失败")
@@ -268,7 +307,6 @@ func (a *app) offer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	device := env("HOMESIM_AUDIO_DEVICE", "hw:Baiwang,0")
 	rec := exec.CommandContext(ctx, "arecord", "-q", "-D", device, "-t", "raw", "-f", "S16_LE", "-r", "8000", "-c", "1")
 	pipe, err := rec.StdoutPipe()
 	if err != nil {
@@ -296,8 +334,10 @@ func (a *app) offer(w http.ResponseWriter, r *http.Request) {
 			if err := track.WriteSample(media.Sample{Data: encoded, Duration: 20 * time.Millisecond}); err != nil {
 				break
 			}
+			v.captured.Add(1)
 		}
 		if ctx.Err() == nil {
+			a.addEvent("audio", "模块录音流停止，音频连接已关闭")
 			cleanup()
 		}
 	}()
@@ -305,6 +345,12 @@ func (a *app) offer(w http.ResponseWriter, r *http.Request) {
 	pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		playOnce.Do(func() {
 			go func() {
+				defer func() {
+					if ctx.Err() == nil {
+						a.addEvent("audio", "模块播放流停止，音频连接已关闭")
+						cleanup()
+					}
+				}()
 				if remote.Codec().MimeType != webrtc.MimeTypePCMU {
 					cleanup()
 					return
@@ -336,6 +382,7 @@ func (a *app) offer(w http.ResponseWriter, r *http.Request) {
 					if _, err = input.Write(pcm); err != nil {
 						break
 					}
+					v.played.Add(1)
 				}
 			}()
 		})
